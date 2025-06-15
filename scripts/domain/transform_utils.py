@@ -10,8 +10,8 @@ class CoordinateSystem(Enum):
 
 
 @dataclass
-class Transform:
+class Transforms:
     coordinate_system: CoordinateSystem
 
-    position: np.ndarray # shape=(3,), (x, y, z)
-    rotation: np.ndarray # shape=(4,), (x, y, z, w)
+    positions: np.ndarray # shape=(N, 3), axis1=(x, y, z)
+    rotations: np.ndarray # shape=(N, 4), axis1=(x, y, z, w)
