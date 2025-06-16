@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-from domain.image_utils import convert_yuv420_888_to_bgr, is_valid_image
+from domain.utils.image_utils import convert_yuv420_888_to_bgr, is_valid_image
 from infra.io.project_manager import Side, ProjectManager
 from infra.io.yuv_repository import YUVRepository
 from infra.io.rgb_repository import RGBRepository

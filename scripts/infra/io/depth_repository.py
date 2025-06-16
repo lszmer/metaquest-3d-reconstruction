@@ -1,7 +1,7 @@
 from pathlib import Path
 import numpy as np
 
-from domain.depth_utils import convert_depth_to_linear
+from domain.utils.depth_utils import convert_depth_to_linear
 
 
 class DepthRepository:

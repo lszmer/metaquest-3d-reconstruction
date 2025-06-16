@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from domain.image_format_info import ImageFormatInfo
+from domain.models.image_format_info import ImageFormatInfo
 
 
 def reconstruct_plane(data, offset, width, height, row_stride, pixel_stride):

@@ -2,9 +2,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from domain.depth_utils import compute_depth_camera_params
-from domain.transform_utils import Transforms, CoordinateSystem
-from domain.camera_dataset import DepthDataset
+from domain.utils.depth_utils import compute_depth_camera_params
+from domain.models.transforms import Transforms, CoordinateSystem
+from domain.models.camera_dataset import DepthDataset
 from infra.io.depth_repository import DepthRepository
 
 

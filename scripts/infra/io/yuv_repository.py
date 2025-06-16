@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import numpy as np
 
-from domain.image_format_info import ImageFormatInfo, ImagePlaneInfo, BaseTime
+from domain.models.image_format_info import ImageFormatInfo, ImagePlaneInfo, BaseTime
 
 
 def load_image_format_info(format_json: Path) -> ImageFormatInfo:

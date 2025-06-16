@@ -3,7 +3,7 @@ from enum import Enum
 import numpy as np
 
 import config.path_config as path_config
-from domain.camera_dataset import DepthDataset
+from domain.models.camera_dataset import DepthDataset
 from infra.io.yuv_repository import YUVRepository
 from infra.io.rgb_repository import RGBRepository
 from infra.io.depth_repository import DepthRepository
