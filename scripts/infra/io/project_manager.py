@@ -1,5 +1,6 @@
 from pathlib import Path
 from enum import Enum
+from typing import Optional
 import numpy as np
 
 import config.path_config as path_config
@@ -80,6 +81,25 @@ class ProjectManager:
             return self.left_depth_data_loader.load_dataset()
         else:
             return self.right_depth_data_loader.load_dataset()
+        
+
+    def load_depth_map_by_index(
+        self,
+        side: Side,
+        index: int,
+        dataset: Optional[DepthDataset] = None,
+    ):
+        if dataset is None:
+            dataset = self.get_depth_dataset(side=side)
+
+        return self.load_depth_map(
+            side=side,
+            timestamp=dataset.timestamps[index],
+            width=dataset.widths[index],
+            height=dataset.heights[index],
+            near=dataset.nears[index],
+            far=dataset.fars[index]
+        )
 
     
     def load_depth_map(

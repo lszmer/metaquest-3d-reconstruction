@@ -50,13 +50,10 @@ def main(args):
         for i in tqdm(range(num_frames), total=num_frames, desc="Converting depth images"):
             timestamp = dataset.timestamps[i]
 
-            depth_map = project_manager.load_depth_map(
+            depth_map = project_manager.load_depth_map_by_index(
                 side=side,
-                timestamp=timestamp,
-                width=dataset.widths[i],
-                height=dataset.heights[i],
-                near=dataset.nears[i],
-                far=dataset.fars[i]
+                index=i,
+                dataset=dataset,
             )
 
             depth_grey_repo.save(
