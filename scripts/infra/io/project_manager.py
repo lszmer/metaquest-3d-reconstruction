@@ -6,7 +6,7 @@ import numpy as np
 import config.path_config as path_config
 from domain.models.camera_dataset import DepthDataset
 from infra.io.yuv_repository import YUVRepository
-from infra.io.rgb_repository import RGBRepository
+from infra.io.image_repository import ImageRepository
 from infra.io.depth_repository import DepthRepository
 from infra.io.depth_dataset_loader import DepthDatasetLoader
 
@@ -29,11 +29,11 @@ class ProjectManager:
             format_json=project_dir / path_config.RIGHT_CAMERA_IMAGE_FORMAT_JSON
         )
 
-        self.left_rgb_repo = RGBRepository(project_dir / path_config.LEFT_CAMERA_RGB_IMAGE_DIR)
-        self.right_rgb_repo = RGBRepository(project_dir / path_config.RIGHT_CAMERA_RGB_IMAGE_DIR)
+        self.left_rgb_repo = ImageRepository(project_dir / path_config.LEFT_CAMERA_RGB_IMAGE_DIR)
+        self.right_rgb_repo = ImageRepository(project_dir / path_config.RIGHT_CAMERA_RGB_IMAGE_DIR)
 
-        self.left_depth_grey_repo = RGBRepository(project_dir / path_config.LEFT_DEPTH_GRAY_IMAGE_DIR)
-        self.right_depth_grey_repo = RGBRepository(project_dir / path_config.RIGHT_DEPTH_GRAY_IMAGE_DIR)
+        self.left_depth_grey_repo = ImageRepository(project_dir / path_config.LEFT_DEPTH_GRAY_IMAGE_DIR)
+        self.right_depth_grey_repo = ImageRepository(project_dir / path_config.RIGHT_DEPTH_GRAY_IMAGE_DIR)
 
         self.left_depth_repo = DepthRepository(
             project_root=project_dir,
@@ -62,14 +62,14 @@ class ProjectManager:
             return self.right_yuv_repo
 
 
-    def get_rgb_repo(self, side: Side) -> RGBRepository:
+    def get_rgb_repo(self, side: Side) -> ImageRepository:
         if side == Side.LEFT:
             return self.left_rgb_repo
         else:
             return self.right_rgb_repo
         
 
-    def get_depth_grey_repo(self, side: Side) -> RGBRepository:
+    def get_depth_grey_repo(self, side: Side) -> ImageRepository:
         if side == Side.LEFT:
             return self.left_depth_grey_repo
         else:

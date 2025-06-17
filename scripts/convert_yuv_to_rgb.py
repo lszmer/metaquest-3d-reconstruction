@@ -9,7 +9,7 @@ from tqdm import tqdm
 from domain.utils.image_utils import convert_yuv420_888_to_bgr, is_valid_image
 from infra.io.project_manager import Side, ProjectManager
 from infra.io.yuv_repository import YUVRepository
-from infra.io.rgb_repository import RGBRepository
+from infra.io.image_repository import ImageRepository
 
 
 def parse_args():
@@ -47,7 +47,7 @@ def parse_args():
 def process_file(
     yuv_file: Path,
     yuv_repo: YUVRepository,
-    rgb_repo: RGBRepository,
+    rgb_repo: ImageRepository,
     is_valid_image: Union[Callable[[np.ndarray], bool], None] = None,
 ) -> bool:
     try:
@@ -61,7 +61,7 @@ def process_file(
                 return False
 
         file_stem = yuv_file.stem
-        rgb_repo.save(file_stem=file_stem, bgr_img=bgr_img)
+        rgb_repo.save(file_stem=file_stem, image=bgr_img)
 
         return True
 
@@ -71,7 +71,7 @@ def process_file(
 
 def convert_yuv_directory_to_png(
     yuv_repo: YUVRepository,
-    rgb_repo: RGBRepository,
+    rgb_repo: ImageRepository,
     is_valid_image: Union[Callable[[np.ndarray], bool], None] = None,
 ):
     yuv_files = yuv_repo.paths
@@ -99,7 +99,7 @@ def convert_yuv_directory_to_png(
                 continue            
 
 
-    print(f"[Info] {processed_count} images written to {rgb_repo.rgb_dir}")
+    print(f"[Info] {processed_count} images written to {rgb_repo.image_dir}")
 
     if is_valid_image:
         print(f"[Info] {excluded_count} images were excluded by filtering.")

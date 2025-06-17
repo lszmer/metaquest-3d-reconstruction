@@ -58,7 +58,7 @@ def main(args):
 
             depth_grey_repo.save(
                 file_stem=timestamp,
-                bgr_img=(depth_map - clip_near) / (clip_far - clip_near) * 255.0
+                image=(depth_map - clip_near) / (clip_far - clip_near) * 255.0
             )
 
         print(f"[Info] Converted depth images for {side} camera to linear format.")
