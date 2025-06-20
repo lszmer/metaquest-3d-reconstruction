@@ -1,9 +1,8 @@
 from pathlib import Path
-from tqdm import tqdm
 import argparse
 import os
 
-from infra.io.project_manager import ProjectManager, Side
+from app import ProjectManager
 
 
 def parse_args():
@@ -35,33 +34,17 @@ def parse_args():
 
 
 def main(args):
-    project_manager = ProjectManager(args.project_dir)
-
     clip_near = args.clip_near
     clip_far = args.clip_far
     print(f"[Info] Clip: near={clip_near}, far={clip_far}")
 
-    for side in Side:
-        dataset = project_manager.get_depth_dataset(side)
-        depth_grey_repo = project_manager.get_depth_grey_repo(side)
+    project_manager = ProjectManager(args.project_dir)
+    project_manager.convert_depth_to_linear_map(
+        clip_near=clip_near,
+        clip_far=clip_far
+    )
+    print("[Info] Depth conversion completed.")
 
-        num_frames = len(dataset.timestamps)
-
-        for i in tqdm(range(num_frames), total=num_frames, desc="Converting depth images"):
-            timestamp = dataset.timestamps[i]
-
-            depth_map = project_manager.load_depth_map_by_index(
-                side=side,
-                index=i,
-                dataset=dataset,
-            )
-
-            depth_grey_repo.save(
-                file_stem=timestamp,
-                image=(depth_map - clip_near) / (clip_far - clip_near) * 255.0
-            )
-
-        print(f"[Info] Converted depth images for {side} camera to linear format.")
 
 
 if __name__ == "__main__":

@@ -1,38 +1,42 @@
-from pathlib import Path
+from typing import Optional
 import numpy as np
-import pandas as pd
 
 from domain.utils.depth_utils import compute_depth_camera_params
+from domain.models.side import Side
 from domain.models.transforms import Transforms, CoordinateSystem
 from domain.models.camera_dataset import DepthDataset
-from infra.io.depth_repository import DepthRepository
+from infra.io.project_io_manager import ProjectIOManager
 
 
 class DepthDatasetLoader:
     def __init__(
         self,
-        depth_dataset_cache_path: Path,
-        descriptor_csv_path: Path,
-        depth_repo: DepthRepository
+        project_io_manager: ProjectIOManager,
+        side: Side
     ):
-        self.depth_dataset_cache_path = depth_dataset_cache_path
-        self.descriptor_csv_path = descriptor_csv_path
-        self.depth_repo = depth_repo
+        self.project_io_manager = project_io_manager
+        self.side = side
+        self.dataset: Optional[DepthDataset] = None
 
 
     def load_dataset(self) -> DepthDataset:
-        if self.depth_dataset_cache_path.exists():
-            print(f"[Info] Depth dataset cache ({self.depth_dataset_cache_path}) detected. Loading cached dataset...")
+        if self.dataset is not None:
+            print(f"[Info] Depth dataset already loaded. Returning cached dataset...")
+            return self.dataset
+
+        if self.project_io_manager.depth_dataset_cache_exists(side=self.side):
+            print(f"[Info] Depth dataset cache found. Loading cached dataset...")
 
             try:
-                return DepthDataset.load(self.depth_dataset_cache_path)
+                return self.project_io_manager.load_depth_dataset_cache(side=self.side)
             except Exception as e:
-                print(f"[Error] Depth dataset cache ({self.depth_dataset_cache_path}) is corrupted or invalid. Rebuilding cache from the original source...\n{e}")
+                print(f"[Error] Depth dataset cache is corrupted or invalid. Rebuilding cache from the original source...\n{e}")
 
         else:
             print(f"[Info] Depth dataset not found. Rebuilding cache from the original source...")
-        
-        df = pd.read_csv(self.descriptor_csv_path)
+
+        df = self.project_io_manager.load_depth_descriptor(side=self.side)
+        depth_repo = self.project_io_manager.get_depth_repo(side=self.side)
 
         depth_paths = []
         timestamps = []
@@ -78,7 +82,7 @@ class DepthDatasetLoader:
                 left, right, top, bottom, width, height
             )
 
-            depth_path = self.depth_repo.get_relaive_path(timestamp=timestamp)
+            depth_path = depth_repo.get_relaive_path(timestamp=timestamp)
 
             depth_paths.append(str(depth_path))
             timestamps.append(timestamp)
@@ -93,7 +97,7 @@ class DepthDatasetLoader:
             nears.append(near)
             fars.append(far)
 
-        dataset = DepthDataset(
+        self.dataset = DepthDataset(
             image_relative_paths=np.array(depth_paths),
             timestamps=np.array(timestamps),
             fx=np.array(fxs),
@@ -111,6 +115,9 @@ class DepthDatasetLoader:
             fars=np.array(fars)
         )
 
-        dataset.save(self.depth_dataset_cache_path)
+        self.project_io_manager.save_depth_dataset_cache(
+            side=self.side,
+            dataset=self.dataset
+        )
 
-        return dataset
+        return self.dataset
