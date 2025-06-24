@@ -1,18 +1,7 @@
 import cv2
 import numpy as np
-from dataclasses import dataclass
+from domain.models.image_format_info import ImageFormatInfo
 
-@dataclass
-class ImagePlaneInfo:
-    bufferSize: int
-    rowStride: int
-    pixelStride: int
-
-@dataclass
-class ImageFormatInfo:
-    width: int
-    height: int
-    planes: list[ImagePlaneInfo]
 
 def reconstruct_plane(data, offset, width, height, row_stride, pixel_stride):
     plane = np.frombuffer(data, dtype=np.uint8)
@@ -26,6 +15,7 @@ def reconstruct_plane(data, offset, width, height, row_stride, pixel_stride):
 
     return output
 
+
 def convert_yuv420_888_to_i420(
         raw_data: bytes, 
         format_info: ImageFormatInfo, 
@@ -38,17 +28,17 @@ def convert_yuv420_888_to_i420(
     if len(planes) != 3:
         raise ValueError("Expected 3 planes for YUV420_888 format")
 
-    y_plane = reconstruct_plane(raw_data, 0, width, height, planes[0].rowStride, planes[0].pixelStride)
-    u_offset = planes[0].bufferSize
+    y_plane = reconstruct_plane(raw_data, 0, width, height, planes[0].row_stride, planes[0].pixel_stride)
+    u_offset = planes[0].buffer_size
     chroma_width = width // 2
     chroma_height = height // 2
-    pixel_stride_uv = planes[1].pixelStride
-    row_stride_uv = planes[1].rowStride
+    pixel_stride_uv = planes[1].pixel_stride
+    row_stride_uv = planes[1].row_stride
 
     if pixel_stride_uv == 1:
         u_plane = reconstruct_plane(raw_data, u_offset, chroma_width, chroma_height, row_stride_uv, 1)
-        v_offset = u_offset + planes[1].bufferSize
-        v_plane = reconstruct_plane(raw_data, v_offset, chroma_width, chroma_height, planes[2].rowStride, 1)
+        v_offset = u_offset + planes[1].buffer_size
+        v_plane = reconstruct_plane(raw_data, v_offset, chroma_width, chroma_height, planes[2].row_stride, 1)
     else:
         uv_interleaved = np.frombuffer(raw_data, dtype=np.uint8)
         u_plane = np.empty((chroma_height, chroma_width), dtype=np.uint8)
@@ -65,6 +55,7 @@ def convert_yuv420_888_to_i420(
                 v_plane[row, :] = row_data[1::2][:chroma_width]
 
     return np.concatenate([y_plane.ravel(), u_plane.ravel(), v_plane.ravel()])
+
 
 def convert_yuv420_888_to_bgr(
         raw_data: bytes, 

@@ -1,23 +1,14 @@
-from typing import Callable, Union
-import numpy as np
-from tqdm import tqdm
-import cv2
-from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import traceback
-import json
 import argparse
-import os
+from pathlib import Path
 
-import constants
-from utils.image_utils import convert_yuv420_888_to_bgr, is_valid_image, ImageFormatInfo, ImagePlaneInfo
+from app import ProjectManager
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--project_dir", "-p",
-        type=str,
+        type=Path,
         required=True,
         help="Path to the project directory containing QRC data."
     )
@@ -39,132 +30,23 @@ def parse_args():
     )
     args = parser.parse_args()
 
-    if not os.path.isdir(args.project_dir):
+    if not args.project_dir.is_dir():
         parser.error(f"Input directory does not exist: {args.project_dir}")
 
     return args
 
 
-def load_image_format_info(fmt_path):
-    with open(fmt_path) as f:
-        format_info = json.load(f)
-
-    width = format_info["width"]
-    height = format_info["height"]
-
-    planes = [
-        ImagePlaneInfo(
-            bufferSize=plane["bufferSize"],
-            rowStride=plane["rowStride"],
-            pixelStride=plane["pixelStride"]
-        ) for plane in format_info["planes"]
-    ]
-
-    return ImageFormatInfo(width=width, height=height, planes=planes)
-
-
-def process_file(
-    yuv_file: Path,
-    output_dir: Path,
-    format_info: ImageFormatInfo,
-    is_valid_image: Union[Callable[[np.ndarray], bool], None] = None,
-) -> bool:
-    try:
-        raw_data = np.fromfile(yuv_file, dtype=np.uint8)
-        bgr_img = convert_yuv420_888_to_bgr(raw_data, format_info)
-
-        if is_valid_image:
-            if not is_valid_image(bgr_img):
-                return False
-
-        file_name = os.path.splitext(os.path.basename(yuv_file))[0]
-        out_path = output_dir / f"{file_name}.png"
-
-        cv2.imwrite(str(out_path), bgr_img)
-        return True
-
-    except Exception:
-        raise RuntimeError(f"Failed in {yuv_file}:\n{traceback.format_exc()}")
-
-
-def convert_yuv_directory_to_png(
-    input_dir: Path,
-    output_dir: Path,
-    format_info: ImageFormatInfo,
-    is_valid_image: Union[Callable[[np.ndarray], bool], None] = None,
-):
-    yuv_files = sorted(input_dir.glob("*.yuv"))
-
-    excluded_count = 0
-    processed_count = 0
-    exception_count = 0
-
-    with ProcessPoolExecutor() as executor:
-        futures = [
-            executor.submit(process_file, yuv_file, output_dir, format_info, is_valid_image)
-            for yuv_file in yuv_files
-        ]
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Converting YUV to PNG"):
-            try:
-                result = future.result()
-                if result:
-                    processed_count += 1
-                else:
-                    excluded_count += 1
-
-            except Exception as e:
-                print(f"[Exception] Worker failed: {e}")
-                exception_count += 1
-                continue            
-
-
-    print(f"[Info] {processed_count} images written to {output_dir}")
-
-    if is_valid_image:
-        print(f"[Info] {excluded_count} images were excluded by filtering.")
-
-    if exception_count > 0:
-        print(f"[Error] {exception_count} files failed due to exceptions.")
-
-
 def main(args):
-    camera_path_params = [
-        {
-            "camera": "left",
-            "input_image_dir": Path(os.path.join(args.project_dir, constants.LEFT_CAMERA_YUV_IMAGE_DIR)),
-            "image_format_json": Path(os.path.join(args.project_dir, constants.LEFT_CAMERA_IMAGE_FORMAT_JSON)),
-            "output_image_dir": Path(os.path.join(args.project_dir, constants.LEFT_CAMERA_RGB_IMAGE_DIR)),
-        },
-        {
-            "camera": "right",
-            "input_image_dir": Path(os.path.join(args.project_dir, constants.RIGHT_CAMERA_YUV_IMAGE_DIR)),
-            "image_format_json": Path(os.path.join(args.project_dir, constants.RIGHT_CAMERA_IMAGE_FORMAT_JSON)),
-            "output_image_dir": Path(os.path.join(args.project_dir, constants.RIGHT_CAMERA_RGB_IMAGE_DIR)),
-        },
-    ]
+    project_manager = ProjectManager(project_dir=args.project_dir)
 
-    for params in camera_path_params:
-        print(f"[Info] Converting {params['camera']} camera images...")
-
-        params["output_image_dir"].mkdir(parents=True, exist_ok=True)
-
-        format_info = load_image_format_info(params["image_format_json"])
-
-        filter = None
-        if args.filter:
-            def filter(bgr_img): return is_valid_image(
-                bgr_img,
-                blur_threshold=args.blur_threshold,
-                exposure_threshold_low=args.exposure_threshold_low,
-                exposure_threshold_high=args.exposure_threshold_high
-            )
-
-        convert_yuv_directory_to_png(
-            input_dir=params["input_image_dir"],
-            output_dir=params["output_image_dir"],
-            format_info=format_info,
-            is_valid_image=filter,
-        )
+    print("[Info] Converting YUV to RGB...")
+    project_manager.convert_yuv_to_rgb(
+        apply_filter=args.filter,
+        blur_threshold=args.blur_threshold,
+        exposure_threshold_low=args.exposure_threshold_low,
+        exposure_threshold_high=args.exposure_threshold_high
+    )
+    print("[Info] Conversion completed.")
 
 
 if __name__ == "__main__":

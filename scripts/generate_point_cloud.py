@@ -1,12 +1,8 @@
-import open3d as o3d
-import numpy as np
-import os
-import argparse
 from pathlib import Path
-import constants
-from dataset_loader import load_or_create_depth_dataset, load_or_create_color_dataset
-from tsdf.integrate_depth_maps import integrate_depth_maps
-from tsdf.sample_color import sample_color_from_color_maps
+import argparse
+import open3d as o3d
+
+from app.project_manager import ProjectManager
 
 
 def parse_args():
@@ -18,22 +14,9 @@ def parse_args():
         help="Path to the project directory"
     )
     parser.add_argument(
-        "--voxel_length",
-        type=float,
-        default=0.01,
-        help="Length of the voxel in meters for TSDF volume (default: 0.01 m)"
-    )
-    parser.add_argument(
-        "--sdf_trunc",
-        type=float,
-        default=0.04,
-        help="Truncation distance for the TSDF volume (default: 0.04 m)"
-    )
-    parser.add_argument(
-        "--down_voxel_size",
-        type=float,
-        default=0.02,
-        help="Voxel size for downsampling. Controls how much to reduce point density (default: 0.02)"
+        "--no_cache",
+        action="store_true",
+        help="Disable caching and force regeneration of the point cloud"
     )
     parser.add_argument(
         "--color",
@@ -41,9 +24,108 @@ def parse_args():
         help="Sample volume color from the color dataset"
     )
     parser.add_argument(
+        "--use_legacy",
+        action="store_true",
+        help="Use tensor-based TSDF volume integration"
+    )
+    parser.add_argument(
         "--visualize",
         action='store_true',
         help="Visualize the TSDF volume"
+    )
+
+    tensor_group = parser.add_argument_group("Tensor Option")
+    tensor_group.add_argument(
+        "--tensor_block_resolution",
+        type=int,
+        default=16,
+        help="Resolution of the voxel block grid (default: 16)"
+    )
+    tensor_group.add_argument(
+        "--tensor_voxel_size",
+        type=float,
+        default=0.01,
+        help="Length of the voxel in meters for TSDF volume (default: 0.01 m)"
+    )
+    tensor_group.add_argument(
+        "--tensor_block_count",
+        type=int,
+        default=10_000,
+        help="Number of blocks in the voxel block grid (default: 10,000)"
+    )
+    tensor_group.add_argument(
+        "--tensor_depth_max",
+        type=float,
+        default=2.0,
+        help="Maximum depth value for TSDF volume (default: 2.0 m)"
+    )
+    tensor_group.add_argument(
+        "--tensor_weight_threshold",
+        type=float,
+        default=3.0,
+        help="Weight threshold for point cloud extraction (default: 3.0)"
+    )
+    tensor_group.add_argument(
+        "--tensor_trunc_voxel_multiplier",
+        type=float,
+        default=5.0,
+        help="Multiplier for trunk voxel size (default: 5.0)"
+    )
+    tensor_group.add_argument(
+        "--tensor_nb_neighbors",
+        type=int,
+        default=20,
+        help="Number of neighbors for point cloud smoothing (default: 20)"
+    )
+    tensor_group.add_argument(
+        "--tensor_std_ratio",
+        type=float,
+        default=2.0,
+        help="Standard deviation ratio for point cloud smoothing (default: 2.0)"
+    )
+    tensor_group.add_argument(
+        "--tensor_down_voxel_size",
+        type=float,
+        default=0.02,
+        help="Voxel size for downsampling. Controls how much to reduce point density (default: 0.02)"
+    )
+    tensor_group.add_argument(
+        "--tensor_device",
+        type=str,
+        default="CUDA:0",
+        help="Device to use for processing (default: 'CUDA:0'). Use 'CPU:0' for CPU processing"
+    )
+
+    legacy_group = parser.add_argument_group("Legacy Option")
+    legacy_group.add_argument(
+        "--legacy_voxel_length",
+        type=float,
+        default=0.01,
+        help="Length of the voxel in meters for TSDF volume (default: 0.01 m)"
+    )
+    legacy_group.add_argument(
+        "--legacy_sdf_trunc",
+        type=float,
+        default=0.05,
+        help="Truncation value for signed distance function (default: 0.05 m)"
+    )
+    legacy_group.add_argument(
+        "--legacy_down_voxel_size",
+        type=float,
+        default=0.02,
+        help="Voxel size for downsampling the point cloud (default: 0.02 m)"
+    )
+    legacy_group.add_argument(
+        "--legacy_nb_neighbors",
+        type=int,
+        default=20,
+        help="Number of neighbors for point cloud smoothing (default: 20)"
+    )
+    legacy_group.add_argument(
+        "--legacy_std_ratio",
+        type=float,
+        default=2.0,
+        help="Standard deviation ratio for point cloud smoothing (default: 2.0)"
     )
 
     return parser.parse_args()
@@ -53,56 +135,36 @@ def main(args):
     project_dir = args.project_dir
     print(f"[Info] Project path: {project_dir}")
 
-    no_color_pcd = project_dir / constants.NO_COLOR_PCD
-    colored_pcd = project_dir / constants.COLORED_PCD
+    project_manager = ProjectManager(project_dir=project_dir)
 
-    if os.path.exists(colored_pcd):
-        print(f"[Info] Found existing colored point cloud: {colored_pcd}")
-        pcd = o3d.io.read_point_cloud(colored_pcd)
-      
+    if args.use_legacy:
+        pcd = project_manager.generate_point_cloud_legacy(
+            color=args.color,
+            voxel_length=args.legacy_voxel_length,
+            sdf_trunc=args.legacy_sdf_trunc,
+            down_voxel_size=args.legacy_down_voxel_size,
+            nb_neighbors=args.legacy_nb_neighbors,
+            std_ratio=args.legacy_std_ratio,
+        )
     else:
-        if os.path.exists(no_color_pcd):
-            print(f"[Info] Found existing no-color point cloud: {no_color_pcd}")
-            pcd = o3d.io.read_point_cloud(no_color_pcd)
+        pcd = project_manager.generate_point_cloud_tensor(
+            no_cache=args.no_cache,
+            color=args.color,
+            block_resolution=args.tensor_block_resolution,
+            voxel_size=args.tensor_voxel_size,
+            block_count=args.tensor_block_count,
+            depth_max=args.tensor_depth_max,
+            weight_threshold=args.tensor_weight_threshold,
+            trunc_voxel_multiplier=args.tensor_trunc_voxel_multiplier,
+            nb_neighbors=args.tensor_nb_neighbors,
+            std_ratio=args.tensor_std_ratio,
+            down_voxel_size=args.tensor_down_voxel_size,
+            device=args.tensor_device
+        )
 
-        else:
-            depth_dataset = load_or_create_depth_dataset(project_dir)
-
-            print("[Info] Integrating depth maps into TSDF volume...")
-            pcd = integrate_depth_maps(depth_dataset, args.voxel_length, args.sdf_trunc)
-            print("[Info] Removing non-finite points...")
-            pcd = pcd.remove_non_finite_points()
-            print("[Info] Downsampling point cloud using voxel grid...")
-            pcd = pcd.voxel_down_sample(voxel_size=args.down_voxel_size)
-            print("[Info] Removing statistical outliers...")
-            _, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2)
-            print(f"[Info] Valid points: {len(ind)} / {len(pcd.points)} ({len(ind) / len(pcd.points) * 100:.2f} %)")
-            pcd = pcd.select_by_index(ind)
-
-            no_color_pcd.parent.mkdir(parents=True, exist_ok=True)
-            o3d.io.write_point_cloud(no_color_pcd, pcd)
-            print(f"[Info] Saved {len(pcd.points)} total points to {no_color_pcd}")
-
-        if args.color:
-            print("[Info] Loading color dataset...")
-            color_dataset = load_or_create_color_dataset(project_dir)
-
-            pcd_colors = sample_color_from_color_maps(
-                np.asarray(pcd.points),
-                color_dataset["color_map_paths"],
-                color_dataset["intrinsics"],
-                color_dataset["extrinsics"]
-            )
-            pcd.colors = o3d.utility.Vector3dVector(pcd_colors)
-
-            colored_pcd.parent.mkdir(parents=True, exist_ok=True)
-            o3d.io.write_point_cloud(colored_pcd, pcd)
-            print(f"[Info] Saved colored point cloud with {len(pcd.colors)} colors to {colored_pcd}")
-        
     if args.visualize:
-        print("[Info] Visualizing point cloud...")
-        axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
-        o3d.visualization.draw_geometries([pcd, axis])
+        print("[Info] Visualizing the generated point cloud...")
+        o3d.visualization.draw_geometries([pcd], window_name="Generated Point Cloud")
 
 
 if __name__ == "__main__":

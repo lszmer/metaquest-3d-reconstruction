@@ -1,27 +1,24 @@
-import pandas as pd
+from typing import Optional
 import numpy as np
+import pandas as pd
 from scipy.spatial.transform import Rotation as R, Slerp
 
 
-def compose_transform(
-    parent_pos: np.ndarray,
-    parent_rot: R,
-    local_pos: np.ndarray,
-    local_rot: R
-) -> tuple[np.ndarray, R]:
-    rotated_local_pos = parent_rot.apply(local_pos)
-
-    world_pos = parent_pos + rotated_local_pos
-    world_rot = parent_rot * local_rot
-
-    return world_pos, world_rot
-
-
 class PoseInterpolator:
-    def __init__(self, csv_path: str):
-        self.df = pd.read_csv(csv_path, on_bad_lines='skip').dropna()
-        self.df = self.df.sort_values('unix_time')
-        self.df = self.df.reset_index(drop=True)
+    def __init__(self, pose_csv_path: str):
+        self.pose_csv_path = pose_csv_path
+        self._df: Optional[pd.DataFrame] = None
+
+
+    @property
+    def df(self):
+        if self._df is None:
+            self._df = pd.read_csv(self.pose_csv_path, on_bad_lines='skip').dropna()
+            self._df = self.df.sort_values('unix_time')
+            self._df = self.df.reset_index(drop=True)
+        
+        return self._df
+
 
     def find_nearest_frames(self, timestamp: int, window_ms: int = 30):
         before = self.df[self.df['unix_time'] <= timestamp]
@@ -31,6 +28,7 @@ class PoseInterpolator:
         next = after.iloc[0] if not after.empty and after.iloc[0]['unix_time'] - timestamp <= window_ms else None
 
         return prev, next
+
 
     def interpolate_pose(self, timestamp: int):
         prev, next = self.find_nearest_frames(timestamp)
@@ -49,6 +47,6 @@ class PoseInterpolator:
             [prev['rot_x'], prev['rot_y'], prev['rot_z'], prev['rot_w']],
             [next['rot_x'], next['rot_y'], next['rot_z'], next['rot_w']],
         ] )
-        rot_interp = Slerp([0, 1], rots)(alpha)
+        rot_interp = Slerp([0, 1], rots)(alpha).as_quat()
 
         return pos_interp, rot_interp
