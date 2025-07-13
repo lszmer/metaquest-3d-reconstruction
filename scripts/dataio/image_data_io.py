@@ -40,21 +40,22 @@ class ImageDataIO:
     def load_rgb(self, side: Side, timestamp: int) -> np.ndarray:
         rgb_dir = self.image_path_config.get_rgb_dir(side=side)
         file_path = rgb_dir / f'{timestamp}.png'
-        return cv2.imread(file_path)
+        bgr = cv2.imread(file_path)
+        return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     
 
     def save_rgb(self, rgb: np.ndarray, side: Side, timestamp: int):
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        self.save_bgr(bgr=bgr, side=side, timestamp=timestamp)
+
+
+    def save_bgr(self, bgr: np.ndarray, side: Side, timestamp: int):
         rgb_dir = self.image_path_config.get_rgb_dir(side=side)
         rgb_dir.mkdir(parents=True, exist_ok=True)
 
         file_path = rgb_dir / f'{timestamp}.png'
 
-        cv2.imwrite(str(file_path), rgb)
-
-
-    def save_bgr(self, bgr: np.ndarray, side: Side, timestamp: int):
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        self.save_rgb(rgb=rgb, side=side, timestamp=timestamp)
+        cv2.imwrite(str(file_path), bgr)
 
 
     def load_image_format_info(self, side: Side) -> ImageFormatInfo:

@@ -43,13 +43,17 @@ class DepthDataIO:
             return None
 
         depth_array = np.fromfile(depth_map_path, dtype='<f4').reshape((height, width))
+
+        if not self.is_depth_map_valid(depth_map=depth_array):
+            return None
+
         depth_map = convert_depth_to_linear(depth_array, near, far)
 
         return depth_map        
 
 
     def is_depth_map_valid(self, depth_map: np.ndarray) -> bool:
-        is_valid = (depth_map != 0).any()
+        is_valid = (depth_map != 0).any() and (depth_map != 1).any()
         is_valid = is_valid and not np.isnan(depth_map).any()
         is_valid = is_valid and (depth_map >= 0).all()
 

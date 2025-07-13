@@ -17,7 +17,7 @@ def reconstruct_plane(data, offset, width, height, row_stride, pixel_stride):
 
 
 def convert_yuv420_888_to_i420(
-        raw_data: bytes, 
+        raw_data: np.ndarray, 
         format_info: ImageFormatInfo, 
         uv_order="NV12"
     ):
@@ -58,7 +58,7 @@ def convert_yuv420_888_to_i420(
 
 
 def convert_yuv420_888_to_bgr(
-        raw_data: bytes, 
+        raw_data: np.ndarray, 
         format_info: ImageFormatInfo, 
         uv_order="NV12"
     ):

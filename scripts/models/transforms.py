@@ -15,7 +15,7 @@ class CoordinateSystem(Enum):
         - Used in Unity3D engine
     - OPENGL:
         - World: Y-up, right-handed
-        - Camera: X-left, Y-up, Z-forward
+        - Camera: X-right, Y-up, Z-backward
         - Used in OpenGL/Open3D
     - NERFSTUDIO:
         - World: Z-up, right-handed
@@ -56,61 +56,50 @@ class Transforms:
         return self.to_extrinsic_matrices(mode=ExtrinsicMode.CameraToWorld)
 
 
+    def get_coordinate_transform_matrix(self, source: CoordinateSystem, target: CoordinateSystem, is_camera: bool) -> np.ndarray:
+        def basis(cs: CoordinateSystem, is_camera: bool) -> np.ndarray:
+            if cs == CoordinateSystem.UNITY:
+                return np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])  # X-right, Y-up, Z-forward (left-handed)
+            elif cs == CoordinateSystem.OPENGL:
+                return np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])  # X-right, Y-up, Z-backward
+            elif cs == CoordinateSystem.NERFSTUDIO:
+                if is_camera:
+                    return np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])  # X-right, Y-up, Z-backward
+                else:
+                    return np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]])  # Z-up world
+            elif cs == CoordinateSystem.COLMAP:
+                return np.array([[1, 0, 0], [0, -1, 0], [0, 0, 1]])  # Y-down
+            else:
+                raise ValueError(f"Unknown coordinate system: {cs}")
+
+        R_source = basis(source, is_camera)
+        R_target = basis(target, is_camera)
+
+        return R_target @ R_source.T
+
+
     def convert_coordinate_system(
-        self, 
+        self,
         target_coordinate_system: CoordinateSystem,
         is_camera: bool = False
     ) -> 'Transforms':
         if self.coordinate_system == target_coordinate_system:
             return self
-        
-        positions = self.positions.copy()
-        rotation_matrices = R.from_quat(self.rotations).as_matrix()  # shape (N, 3, 3)
 
-        # Convert positions and rotations into the UNITY coordinate system
-        if self.coordinate_system != CoordinateSystem.UNITY:
-            if self.coordinate_system == CoordinateSystem.OPENGL:
-                positions[:, 0] *= -1
-                rotation_matrices[:, :, 0] = -rotation_matrices[:, :, 0]
-                rotation_matrices[:, 0, :] = -rotation_matrices[:, 0, :]
+        # Compute rotation from source to target
+        R_conv = self.get_coordinate_transform_matrix(self.coordinate_system, target_coordinate_system, is_camera)  # shape (3,3)
 
-            elif self.coordinate_system == CoordinateSystem.NERFSTUDIO:
-                positions[:, [1, 2]] = positions[:, [2, 1]]
-                rotation_matrices[:, 1:3, 1:3] = rotation_matrices[:, 1:3, 1:3].T
-                if is_camera:
-                    rotation_matrices = rotation_matrices @ R.from_rotvec(-np.pi / 2 * np.array([1, 0, 0])).as_matrix()
+        # Apply to rotations
+        rotation_matrices = R.from_quat(self.rotations).as_matrix()  # (N, 3, 3)
+        converted_rotations = R_conv @ rotation_matrices @ R_conv.T  # (N, 3, 3)
 
-            elif self.coordinate_system == CoordinateSystem.COLMAP:
-                positions[:, 1] *= -1
-                rotation_matrices[:, :, 1] = -rotation_matrices[:, :, 1]
-                rotation_matrices[:, 1, :] = -rotation_matrices[:, 1, :]
+        # Apply to positions (world transformation)
+        converted_positions = (R_conv @ self.positions.T).T  # (N, 3)
 
-            else:
-                raise ValueError(f"Unsupported coordinate system: {self.coordinate_system}")
-            
-        # Convert positions and rotations into the target coordinate system
-        if target_coordinate_system == CoordinateSystem.UNITY:
-            pass
-        elif target_coordinate_system == CoordinateSystem.OPENGL:
-            positions[:, 0] *= -1
-            rotation_matrices[:, :, 0] = -rotation_matrices[:, :, 0]
-            rotation_matrices[:, 0, :] = -rotation_matrices[:, 0, :]
-        elif target_coordinate_system == CoordinateSystem.NERFSTUDIO:
-            positions[:, [1, 2]] = positions[:, [2, 1]]
-            rotation_matrices[:, 1:3, 1:3] = rotation_matrices[:, 1:3, 1:3].T
-            if is_camera:
-                rotation_matrices = rotation_matrices @ R.from_rotvec(-np.pi / 2 * np.array([1, 0, 0])).as_matrix()
-        elif target_coordinate_system == CoordinateSystem.COLMAP:
-            positions[:, 1] *= -1
-            rotation_matrices[:, :, 1] = -rotation_matrices[:, :, 1]
-            rotation_matrices[:, 1, :] = -rotation_matrices[:, 1, :]
-        else:
-            raise ValueError(f"Unsupported target coordinate system: {target_coordinate_system}")
-        
         return Transforms(
             coordinate_system=target_coordinate_system,
-            positions=positions,
-            rotations=R.from_matrix(rotation_matrices).as_quat()
+            positions=converted_positions,
+            rotations=R.from_matrix(converted_rotations).as_quat()
         )
         
 

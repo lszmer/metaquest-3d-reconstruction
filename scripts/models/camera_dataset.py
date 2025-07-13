@@ -90,7 +90,7 @@ class CameraDataset:
     @staticmethod
     def parse_transforms(data):
         data['transforms'] = Transforms(
-            coordinate_system=CoordinateSystem[data.pop('coordinate_system').item()],
+            coordinate_system=CoordinateSystem[str(data.pop('coordinate_system'))],
             positions=data.pop('positions'),
             rotations=data.pop('rotations')
         )
@@ -98,13 +98,15 @@ class CameraDataset:
     
     @classmethod
     def from_dict(cls, data):
+        if 'coordinate_system' in data:
+            cls.parse_transforms(data)
+
         return cls(**data)
 
 
     @classmethod
     def load(cls, path: Path):
         data = dict(np.load(path, allow_pickle=False))
-        cls.parse_transforms(data)
 
         return cls.from_dict(data=data)
     
@@ -121,11 +123,6 @@ class DepthDataset(CameraDataset):
         d['fars'] = self.fars
 
         return d
-
-
-    @classmethod
-    def from_dict(cls, data):
-        return cls(**data)
 
 
     @classmethod

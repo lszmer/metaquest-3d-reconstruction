@@ -12,7 +12,7 @@ def compute_depth_camera_params(
     fx = width / (right + left)
     fy = height / (top + bottom)
 
-    cx = width * left / (right + left)
+    cx = width * right / (right + left)
     cy = height * top / (top + bottom)
 
     return fx, fy, cx, cy
