@@ -11,4 +11,5 @@ def reconstruct_scene(depth_data_io: DepthDataIO):
 
     print("[Info] Visualizing the generated point cloud...")
     legacy_fragments = [f.to_legacy() for f in fragments]
+
     o3d.visualization.draw_geometries(legacy_fragments + [axis], window_name="Generated Point Cloud")

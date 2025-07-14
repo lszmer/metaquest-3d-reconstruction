@@ -134,7 +134,7 @@ def load_depth_map(
     # Open3D's image coordinate system (top-left origin) by flipping.
     return o3d.t.geometry.Image(
         tensor=o3d.core.Tensor(
-            np.flipud(np.fliplr(depth_np)),
+            depth_np,
             dtype=o3d.core.Dtype.Float32,
             device=device
         )
@@ -155,12 +155,9 @@ def build_pose_graph_for_fragment(
     N = len(frag_dataset.timestamps)
     pose_graph = o3d.pipelines.registration.PoseGraph()
 
-    width = frag_dataset.widths[0]
-    height = frag_dataset.heights[0]
-
     intrinsic_matrix = frag_dataset.get_intrinsic_matrices()[0]
-    intrinsic_matrix[0, 2] = width - intrinsic_matrix[0, 2]
-    intrinsic_matrix[1, 2] = height - intrinsic_matrix[1, 2]
+    intrinsic_matrix[0, 2] = intrinsic_matrix[0, 2]
+    intrinsic_matrix[1, 2] = intrinsic_matrix[1, 2]
 
     intrinsic_tensor = o3d.core.Tensor(
         intrinsic_matrix,
@@ -226,7 +223,7 @@ def build_pose_graph_for_fragment(
                     target_node_id=i + 1,
                     transformation=relative_pose,
                     information=info.cpu().numpy(),
-                    uncertain=True,
+                    uncertain=False,
                     confidence=1.0
                 )
             pose_graph.edges.append(edge)
@@ -366,12 +363,11 @@ def make_fragments(
     for side in Side:
         depth_dataset = depth_data_io.load_depth_dataset(side=side, use_cache=use_cache)
         depth_dataset.transforms = depth_dataset.transforms.convert_coordinate_system(
-            target_coordinate_system=CoordinateSystem.OPENGL,
+            target_coordinate_system=CoordinateSystem.OPEN3D,
             is_camera=True
         )
 
-        # frag_datasets = split_dataset(dataset=depth_dataset, fragment_size=fragment_size)
-        frag_datasets = split_dataset(dataset=depth_dataset, fragment_size=1)[:1]
+        frag_datasets = split_dataset(dataset=depth_dataset, fragment_size=fragment_size)[:1]
 
         fragment_dataset_map[side] = frag_datasets
 

@@ -13,10 +13,10 @@ class CoordinateSystem(Enum):
         - World: Y-up, left-handed
         - Camera: X-right, Y-up, Z-forward
         - Used in Unity3D engine
-    - OPENGL:
+    - OPEN3D:
         - World: Y-up, right-handed
-        - Camera: X-right, Y-up, Z-backward
-        - Used in OpenGL/Open3D
+        - Camera: X-right, Y-down, Z-forward
+        - Used in Open3D
     - NERFSTUDIO:
         - World: Z-up, right-handed
         - Camera: X-right, Y-up, Z-backward
@@ -27,7 +27,7 @@ class CoordinateSystem(Enum):
         - Used in COLMAP
     """
     UNITY = "Unity"
-    OPENGL = "OpenGL"
+    OPEN3D = "Open3D"
     NERFSTUDIO = "NerfStudio"
     COLMAP = "COLMAP"
 
@@ -56,26 +56,36 @@ class Transforms:
         return self.to_extrinsic_matrices(mode=ExtrinsicMode.CameraToWorld)
 
 
-    def get_coordinate_transform_matrix(self, source: CoordinateSystem, target: CoordinateSystem, is_camera: bool) -> np.ndarray:
-        def basis(cs: CoordinateSystem, is_camera: bool) -> np.ndarray:
-            if cs == CoordinateSystem.UNITY:
-                return np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])  # X-right, Y-up, Z-forward (left-handed)
-            elif cs == CoordinateSystem.OPENGL:
-                return np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])  # X-right, Y-up, Z-backward
-            elif cs == CoordinateSystem.NERFSTUDIO:
-                if is_camera:
-                    return np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])  # X-right, Y-up, Z-backward
-                else:
-                    return np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]])  # Z-up world
-            elif cs == CoordinateSystem.COLMAP:
-                return np.array([[1, 0, 0], [0, -1, 0], [0, 0, 1]])  # Y-down
+    def get_coordinate_transform_matrix(self, source: CoordinateSystem, target: CoordinateSystem) -> np.ndarray:
+        def basis(cs: CoordinateSystem) -> np.ndarray:
+            if cs == CoordinateSystem.UNITY:        # X-right, Y-up, Z-forward (L-handed)
+                return np.eye(3)
+            elif cs == CoordinateSystem.OPEN3D:     # X-right, Y-up, Z-backward (R-handed)
+                return np.diag((1, 1, -1))
+            elif cs == CoordinateSystem.NERFSTUDIO: # X-right, Y-forward, Z-up (R-handed)
+                return np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]]) 
+            elif cs == CoordinateSystem.COLMAP:     # X-right, Y-down, Z-forward (R-handed)
+                return np.diag((1, -1, 1))
             else:
                 raise ValueError(f"Unknown coordinate system: {cs}")
-
-        R_source = basis(source, is_camera)
-        R_target = basis(target, is_camera)
+            
+        R_source = basis(source)
+        R_target = basis(target)
 
         return R_target @ R_source.T
+
+
+    def get_camera_basis_matrix(self, cs: CoordinateSystem) -> np.ndarray:
+        if cs == CoordinateSystem.UNITY:        # World:  X-right, Y-up, Z-forward
+            return np.eye(3)                    # Camera: X-right, Y-up, Z-forward
+        elif cs == CoordinateSystem.OPEN3D:     # World:  X-right, Y-up, Z-backward
+            return np.diag((1, -1, -1))         # Camera: X-right, Y-down, Z-forward
+        elif cs == CoordinateSystem.NERFSTUDIO:                 # World:  X-right, Y-forward, Z-up
+            return np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]]) # Camera: X-right, Y-up, Z-backward
+        elif cs == CoordinateSystem.COLMAP:     # World:  X-right, Y-down, Z-forward
+            return np.eye(3)                    # Camera: X-right, Y-down, Z-forward
+        else:
+            raise ValueError(f"Unknown coordinate system: {cs}")
 
 
     def convert_coordinate_system(
@@ -86,15 +96,23 @@ class Transforms:
         if self.coordinate_system == target_coordinate_system:
             return self
 
-        # Compute rotation from source to target
-        R_conv = self.get_coordinate_transform_matrix(self.coordinate_system, target_coordinate_system, is_camera)  # shape (3,3)
-
-        # Apply to rotations
-        rotation_matrices = R.from_quat(self.rotations).as_matrix()  # (N, 3, 3)
-        converted_rotations = R_conv @ rotation_matrices @ R_conv.T  # (N, 3, 3)
+        R_conv = self.get_coordinate_transform_matrix(self.coordinate_system, target_coordinate_system)  # shape (3,3)
 
         # Apply to positions (world transformation)
         converted_positions = (R_conv @ self.positions.T).T  # (N, 3)
+
+        # Apply to rotations
+        rotation_matrices = R.from_quat(self.rotations).as_matrix()  # (N, 3, 3)
+
+        if is_camera:
+            source_basis_matrix = self.get_camera_basis_matrix(self.coordinate_system)
+            rotation_matrices = rotation_matrices @ source_basis_matrix.T
+
+        converted_rotations = R_conv @ rotation_matrices @ R_conv.T  # (N, 3, 3)
+
+        if is_camera:
+            target_basis_matrix = self.get_camera_basis_matrix(target_coordinate_system)
+            converted_rotations = converted_rotations @ target_basis_matrix
 
         return Transforms(
             coordinate_system=target_coordinate_system,

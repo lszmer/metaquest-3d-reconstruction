@@ -30,7 +30,7 @@ DEPTH_DIR_MAP = {
 
 DEPTH_DESCRIPTOR_CSV_MAP = {
     Side.LEFT: 'left_depth_descriptors.csv',
-    Side.RIGHT: 'left_depth_descriptors.csv',
+    Side.RIGHT: 'right_depth_descriptors.csv',
 }
 
 LINEAR_DEPTH_DIR_MAP = {
