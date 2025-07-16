@@ -1,5 +1,6 @@
 import open3d as o3d
 
+from config.reconstruction_config import FragmentGenerationConfig
 from dataio.depth_data_io import DepthDataIO
 from processing.reconstruction.make_fragments import make_fragment_datasets
 from processing.reconstruction.o3d_utils import integrate
@@ -15,7 +16,7 @@ def reconstruct_scene(depth_data_io: DepthDataIO):
     axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
 
     log_step("Make Fragments")
-    frag_dataset_map = make_fragment_datasets(depth_data_io=depth_data_io, use_cache=True)
+    frag_dataset_map = make_fragment_datasets(depth_data_io=depth_data_io, config=FragmentGenerationConfig())
 
     print("[Info] Visualizing the generated point cloud...")
     fragments = []

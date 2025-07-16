@@ -1,13 +1,14 @@
 from typing import Generator, Optional
-from tqdm import tqdm
 import numpy as np
 import open3d as o3d
 
+from config.reconstruction_config import FragmentGenerationConfig
 from dataio.depth_data_io import DepthDataIO
 from models.camera_dataset import DepthDataset
 from models.side import Side
 from models.transforms import CoordinateSystem
-from processing.reconstruction.o3d_utils import compute_o3d_intrinsic_matrices, convert_pose_graph_to_transforms, load_depth_map
+from processing.reconstruction.o3d_utils import compute_o3d_intrinsic_matrices, convert_pose_graph_to_transforms, convert_transforms_to_pose_graph, load_depth_map
+from utils.paralell_utils import parallel_map
 
 
 def frustum_overlap_filter(
@@ -116,16 +117,9 @@ def build_pose_graph_for_fragment(
     frag_dataset: DepthDataset,
     depth_data_io: DepthDataIO,
     side: Side,
-    odometry_loop_interval: int,
-    overlap_ratio_threshold: float,
-    loop_yaw_info_density_threshold: float,
-    dist_threshold: float,
-    depth_max: float,
-    device: o3d.core.Device,
+    config: FragmentGenerationConfig,
 ) -> o3d.pipelines.registration.PoseGraph:
     N = len(frag_dataset.timestamps)
-    pose_graph = o3d.pipelines.registration.PoseGraph()
-
     intrinsic_matrix = compute_o3d_intrinsic_matrices(dataset=frag_dataset)[0]
 
     intrinsic_tensor = o3d.core.Tensor(
@@ -138,13 +132,7 @@ def build_pose_graph_for_fragment(
     extrinsics_wc = transforms.extrinsics_wc
     extrinsics_cw = transforms.extrinsics_cw
 
-    # register nodes
-    for i in tqdm(range(N), desc=f"[{side.name}] Registering nodes for fragment"):
-        pose_graph.nodes.append(
-            o3d.pipelines.registration.PoseGraphNode(
-                pose=extrinsics_cw[i]
-            )
-        )
+    pose_graph = convert_transforms_to_pose_graph(transforms=transforms)
 
     # odometry
     depth_curr = load_depth_map(
@@ -152,17 +140,17 @@ def build_pose_graph_for_fragment(
         side=side,
         index=0,
         dataset=frag_dataset,
-        device=device
+        device=config.device
     )
     extrinsic_curr_cw = extrinsics_cw[0]
 
-    for i in tqdm(range(0, N - 1), desc=f"[{side.name}] Calculating odometry"):
+    for i in range(0, N - 1):
         depth_next =  load_depth_map(
             depth_data_io=depth_data_io,
             side=side,
             index=i + 1,
             dataset=frag_dataset,
-            device=device
+            device=config.device
         )
         extrinsic_next_wc = extrinsics_wc[i + 1]
 
@@ -182,9 +170,9 @@ def build_pose_graph_for_fragment(
                 target_depth=depth_next,
                 intrinsic=intrinsic_tensor,
                 source_to_target=relative_pose_tensor,
-                dist_threshold=dist_threshold,
+                dist_threshold=config.dist_threshold,
                 depth_scale=1.0,
-                depth_max=depth_max,
+                depth_max=config.depth_max,
             )
 
             edge = o3d.pipelines.registration.PoseGraphEdge(
@@ -201,16 +189,16 @@ def build_pose_graph_for_fragment(
         extrinsic_curr_cw = extrinsics_cw[i + 1]
 
     # loop closure
-    key_indices = list(range(0, N, odometry_loop_interval))
+    key_indices = list(range(0, N, config.odometry_loop_interval))
     N_key_frames = len(key_indices)
 
-    for i in tqdm(range(N_key_frames), desc=f"[{side.name}] Loop closure"):
+    for i in range(N_key_frames):
         key_i = key_indices[i]
         width = frag_dataset.widths[i]
         height = frag_dataset.heights[i]
 
         depth_curr = load_depth_map(
-            depth_data_io=depth_data_io, side=side, index=key_i, dataset=frag_dataset, device=device
+            depth_data_io=depth_data_io, side=side, index=key_i, dataset=frag_dataset, device=config.device
         )
         extrinsic_curr_cw = extrinsics_cw[key_i]
 
@@ -220,7 +208,7 @@ def build_pose_graph_for_fragment(
         for j in range(i + 1, N_key_frames):
             key_j = key_indices[j]
             depth_next = load_depth_map(
-                depth_data_io=depth_data_io, side=side, index=key_j, dataset=frag_dataset, device=device
+                depth_data_io=depth_data_io, side=side, index=key_j, dataset=frag_dataset, device=config.device
             )
             extrinsic_next_cw = extrinsics_cw[key_j]
             extrinsic_next_wc = extrinsics_wc[key_j]
@@ -242,8 +230,8 @@ def build_pose_graph_for_fragment(
                 intrinsic_2=intrinsic_matrix,
                 image_size_1=(width, height), 
                 image_size_2=(width, height),
-                z_near=0.1, z_far=depth_max, 
-                overlap_ratio_threshold=overlap_ratio_threshold,
+                z_near=0.1, z_far=config.depth_max, 
+                overlap_ratio_threshold=config.overlap_ratio_threshold,
             ):
                 continue
 
@@ -251,11 +239,11 @@ def build_pose_graph_for_fragment(
             # even if the depth tensor is on the GPU.
             info = o3d.t.pipelines.odometry.compute_odometry_information_matrix(
                 source_depth=depth_curr, target_depth=depth_next, intrinsic=intrinsic_tensor,
-                source_to_target=relative_pose_tensor, dist_threshold=dist_threshold,
-                depth_scale=1.0, depth_max=depth_max,
+                source_to_target=relative_pose_tensor, dist_threshold=config.dist_threshold,
+                depth_scale=1.0, depth_max=config.depth_max,
             )
 
-            if info[5, 5] / (width * height) > loop_yaw_info_density_threshold:
+            if info[5, 5] / (width * height) > config.loop_yaw_info_density_threshold:
                 edge = o3d.pipelines.registration.PoseGraphEdge(
                     source_node_id=key_i, target_node_id=key_j,
                     transformation=relative_pose, information=info.cpu().numpy(),
@@ -266,50 +254,67 @@ def build_pose_graph_for_fragment(
     return pose_graph
 
 
-def make_fragment_datasets(
+def optimize_dataset_pose(
     depth_data_io: DepthDataIO,
-    fragment_size: int = 100,
-    depth_max: float = 3.0,
-    odometry_loop_interval: int = 10,
-    overlap_ratio_threshold: float = 0.1,
-    loop_yaw_info_density_threshold: float = 0.3,
-    dist_threshold: float = 0.07,
-    edge_prune_threshold=0.25,
-    device: o3d.core.Device = o3d.core.Device("CUDA:0"),
-    use_cache: bool = False,
-) -> dict[Side, list[DepthDataset]]:
-    option = o3d.pipelines.registration.GlobalOptimizationOption(
-        max_correspondence_distance=dist_threshold, 
-        edge_prune_threshold=edge_prune_threshold, 
-        reference_node=0
+    frag_dataset: DepthDataset,
+    side: Side,
+    config: FragmentGenerationConfig,
+):
+    pose_graph = build_pose_graph_for_fragment(
+        frag_dataset=frag_dataset, 
+        depth_data_io=depth_data_io, 
+        side=side, 
+        config=config
     )
 
+    # PoseGraph Optimization
+    option = o3d.pipelines.registration.GlobalOptimizationOption(
+        max_correspondence_distance=config.dist_threshold, 
+        edge_prune_threshold=config.edge_prune_threshold, 
+        reference_node=0
+    )
+    o3d.pipelines.registration.global_optimization(
+        pose_graph, 
+        o3d.pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
+        o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria(), 
+        option
+    )
+
+    frag_dataset.transforms = convert_pose_graph_to_transforms(pose_graph=pose_graph) 
+
+
+def make_fragment_datasets(
+    depth_data_io: DepthDataIO,
+    config: FragmentGenerationConfig,
+) -> dict[Side, list[DepthDataset]]:
     fragment_dataset_map: dict[Side, list[DepthDataset]] = {}
     
     for side in Side:
         fragments = []
         fragment_dataset_map[side] = fragments
 
-        depth_dataset = depth_data_io.load_depth_dataset(side=side, use_cache=use_cache)
+        depth_dataset = depth_data_io.load_depth_dataset(side=side, use_cache=config.use_cache)
         depth_dataset.transforms = depth_dataset.transforms.convert_coordinate_system(
             target_coordinate_system=CoordinateSystem.OPEN3D,
             is_camera=True
         )
 
-        frag_datasets = split_dataset(dataset=depth_dataset, fragment_size=fragment_size)
+        frag_datasets = split_dataset(dataset=depth_dataset, fragment_size=config.fragment_size)
         fragment_dataset_map[side] = frag_datasets
 
-        for _, frag_dataset in enumerate(frag_datasets):
-            pose_graph = build_pose_graph_for_fragment(
-                frag_dataset, depth_data_io, side, odometry_loop_interval,
-                overlap_ratio_threshold, loop_yaw_info_density_threshold,
-                dist_threshold, depth_max, device)
-
-            # PoseGraph Optimization
-            o3d.pipelines.registration.global_optimization(
-                pose_graph, o3d.pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
-                o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria(), option)
-
-            frag_dataset.transforms = convert_pose_graph_to_transforms(pose_graph=pose_graph) 
+        args_list = [
+            (depth_data_io, frag_dataset, side, config)
+            for frag_dataset in frag_datasets
+        ]
+        parallel_map(
+            func=optimize_dataset_pose,
+            args_list=args_list,
+            max_workers=None,
+            use_multiprocessing=config.use_multi_threading,
+            context="spawn",
+            default_on_error=None,
+            show_progress=True,
+            desc="[Info] Optimizing Depth Camera Pose..."
+        )
 
     return fragment_dataset_map

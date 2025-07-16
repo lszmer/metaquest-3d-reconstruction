@@ -18,6 +18,22 @@ def compute_o3d_intrinsic_matrices(dataset: DepthDataset) -> np.ndarray:
     return intrinsic_matrices
 
 
+def convert_transforms_to_pose_graph(transforms: Transforms) -> o3d.pipelines.registration.PoseGraph:
+    pose_graph = o3d.pipelines.registration.PoseGraph()
+
+    extrinsics_cw = transforms.extrinsics_cw
+    N = len(extrinsics_cw)
+
+    for i in range(N):
+        pose_graph.nodes.append(
+            o3d.pipelines.registration.PoseGraphNode(
+                pose=extrinsics_cw[i]
+            )
+        )
+    
+    return pose_graph
+
+
 def convert_pose_graph_to_transforms(pose_graph: o3d.pipelines.registration.PoseGraph) -> Transforms:
     pose = np.array([node.pose for node in pose_graph.nodes])
 
