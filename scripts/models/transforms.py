@@ -139,23 +139,43 @@ class Transforms:
             raise ValueError(f"Unsupported extrinsic mode: {mode}")
 
 
-    def compose_transform(
+    def apply_local_transform(
         self,
-        local_position: np.ndarray, # shape=(3), axis1=(x, y, z)
-        local_rotation: np.ndarray, # shape=(4), axis1=(x, y, z, w)
+        local_position: np.ndarray,  # shape=(3,)
+        local_rotation: np.ndarray   # shape=(4,)
     ) -> 'Transforms':
-        parent_rotations = R.from_quat(self.rotations)
-        rotated_local_positions = parent_rotations.apply(local_position)
+        parent_rot = R.from_quat(self.rotations)
+        rotated_pos = parent_rot.apply(local_position)
+        composed_pos = self.positions + rotated_pos
 
-        world_positions = self.positions + rotated_local_positions
-        world_rotations = parent_rotations * R.from_quat(local_rotation)
+        local_rot = R.from_quat(local_rotation)
+        composed_rot = parent_rot * local_rot
 
         return Transforms(
             coordinate_system=self.coordinate_system,
-            positions=world_positions,
-            rotations=world_rotations.as_quat()
+            positions=composed_pos,
+            rotations=composed_rot.as_quat()
         )
-    
+
+
+    def apply_world_transform(
+        self,
+        delta_position: np.ndarray,  # shape=(3,)
+        delta_rotation: np.ndarray   # shape=(4,)
+    ) -> 'Transforms':
+        delta_rot = R.from_quat(delta_rotation)
+
+        rotated_pos = delta_rot.apply(self.positions)
+        transformed_pos = rotated_pos + delta_position
+
+        new_rot = delta_rot * R.from_quat(self.rotations)
+
+        return Transforms(
+            coordinate_system=self.coordinate_system,
+            positions=transformed_pos,
+            rotations=new_rot.as_quat()
+        )
+            
 
     def to_dict(self) -> dict:
         d = {

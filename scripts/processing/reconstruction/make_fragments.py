@@ -7,6 +7,7 @@ from dataio.depth_data_io import DepthDataIO
 from models.camera_dataset import DepthDataset
 from models.side import Side
 from models.transforms import CoordinateSystem
+from processing.reconstruction.o3d_utils import compute_o3d_intrinsic_matrices, convert_pose_graph_to_transforms, load_depth_map
 
 
 def frustum_overlap_filter(
@@ -111,36 +112,6 @@ def split_dataset(
     ]
 
 
-def load_depth_map(
-    depth_data_io: DepthDataIO,
-    side: Side,
-    index: int,
-    dataset: DepthDataset,
-    device: o3d.core.Device,
-) -> Optional[o3d.t.geometry.Image]:
-    depth_np = depth_data_io.load_depth_map(
-        side=side,
-        timestamp=dataset.timestamps[index],
-        width=dataset.widths[index],
-        height=dataset.heights[index],
-        near=dataset.nears[index],
-        far=dataset.fars[index],
-    )
-
-    if depth_np is None:
-        return None
-
-    # Convert from Unity/Android coordinate system (bottom-left origin) to
-    # Open3D's image coordinate system (top-left origin) by flipping.
-    return o3d.t.geometry.Image(
-        tensor=o3d.core.Tensor(
-            depth_np,
-            dtype=o3d.core.Dtype.Float32,
-            device=device
-        )
-    )
-
-
 def build_pose_graph_for_fragment(
     frag_dataset: DepthDataset,
     depth_data_io: DepthDataIO,
@@ -151,14 +122,11 @@ def build_pose_graph_for_fragment(
     dist_threshold: float,
     depth_max: float,
     device: o3d.core.Device,
-) -> tuple[o3d.pipelines.registration.PoseGraph, o3d.camera.PinholeCameraIntrinsic]:
+) -> o3d.pipelines.registration.PoseGraph:
     N = len(frag_dataset.timestamps)
     pose_graph = o3d.pipelines.registration.PoseGraph()
 
-    width = frag_dataset.widths[0]
-    intrinsic_matrix = frag_dataset.get_intrinsic_matrices()[0]
-    intrinsic_matrix[0, 2] = width - intrinsic_matrix[0, 2]
-    intrinsic_matrix[1, 2] = intrinsic_matrix[1, 2]
+    intrinsic_matrix = compute_o3d_intrinsic_matrices(dataset=frag_dataset)[0]
 
     intrinsic_tensor = o3d.core.Tensor(
         intrinsic_matrix,
@@ -295,58 +263,10 @@ def build_pose_graph_for_fragment(
                 )
                 pose_graph.edges.append(edge)
 
-    return pose_graph, intrinsic_tensor
+    return pose_graph
 
 
-def optimize_and_create_pointcloud(
-    pose_graph: o3d.pipelines.registration.PoseGraph,
-    frag_dataset: DepthDataset,
-    depth_data_io: DepthDataIO,
-    side: Side,
-    intrinsic_tensor: o3d.core.Tensor,
-    dist_threshold: float,
-    voxel_size: float,
-    depth_max: float,
-    device: o3d.core.Device,
-) -> Optional[o3d.t.geometry.PointCloud]:
-    # PoseGraph Optimization
-    option = o3d.pipelines.registration.GlobalOptimizationOption(
-        max_correspondence_distance=dist_threshold, edge_prune_threshold=0.25, reference_node=0)
-    o3d.pipelines.registration.global_optimization(
-        pose_graph, o3d.pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
-        o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria(), option)
-
-    # Create point cloud from fragment
-    pcd_combined: Optional[o3d.t.geometry.PointCloud] = None
-    optimized_poses = [node.pose for node in pose_graph.nodes]
-
-    for i in tqdm(range(len(frag_dataset.timestamps)), desc=f"[{side.name}] Creating fragment point cloud"):
-        depth_map = load_depth_map(
-            depth_data_io=depth_data_io, side=side, index=i, dataset=frag_dataset, device=device)
-        if depth_map is None:
-            continue
-
-        pcd = o3d.t.geometry.PointCloud.create_from_depth_image(
-            depth=depth_map,
-            intrinsics=intrinsic_tensor.to(o3d.core.Dtype.Float32), 
-            extrinsics=o3d.core.Tensor(np.linalg.inv(optimized_poses[i]), dtype=o3d.core.Dtype.Float32),
-            depth_scale=1.0, 
-            depth_max=depth_max, 
-            stride=1)
-
-        if pcd_combined is None:
-            pcd_combined = pcd
-        else:
-            pcd_combined.append(pcd)
-
-    if pcd_combined is None:
-        return None
-
-    # Voxel Down-sampling
-    return pcd_combined.voxel_down_sample(voxel_size)
-
-
-def make_fragments(
+def make_fragment_datasets(
     depth_data_io: DepthDataIO,
     fragment_size: int = 100,
     depth_max: float = 3.0,
@@ -354,14 +274,22 @@ def make_fragments(
     overlap_ratio_threshold: float = 0.1,
     loop_yaw_info_density_threshold: float = 0.3,
     dist_threshold: float = 0.07,
-    voxel_size: float = 0.05,
+    edge_prune_threshold=0.25,
     device: o3d.core.Device = o3d.core.Device("CUDA:0"),
     use_cache: bool = False,
-) -> list[o3d.t.geometry.PointCloud]:
-    fragments = []
+) -> dict[Side, list[DepthDataset]]:
+    option = o3d.pipelines.registration.GlobalOptimizationOption(
+        max_correspondence_distance=dist_threshold, 
+        edge_prune_threshold=edge_prune_threshold, 
+        reference_node=0
+    )
+
     fragment_dataset_map: dict[Side, list[DepthDataset]] = {}
     
     for side in Side:
+        fragments = []
+        fragment_dataset_map[side] = fragments
+
         depth_dataset = depth_data_io.load_depth_dataset(side=side, use_cache=use_cache)
         depth_dataset.transforms = depth_dataset.transforms.convert_coordinate_system(
             target_coordinate_system=CoordinateSystem.OPEN3D,
@@ -369,22 +297,19 @@ def make_fragments(
         )
 
         frag_datasets = split_dataset(dataset=depth_dataset, fragment_size=fragment_size)
-
         fragment_dataset_map[side] = frag_datasets
 
         for _, frag_dataset in enumerate(frag_datasets):
-            pose_graph, intrinsic_tensor = build_pose_graph_for_fragment(
+            pose_graph = build_pose_graph_for_fragment(
                 frag_dataset, depth_data_io, side, odometry_loop_interval,
                 overlap_ratio_threshold, loop_yaw_info_density_threshold,
                 dist_threshold, depth_max, device)
 
-            fragment_pcd = optimize_and_create_pointcloud(
-                pose_graph, frag_dataset, depth_data_io, side, intrinsic_tensor,
-                dist_threshold, voxel_size, depth_max, device)
-            
-            if fragment_pcd is None:
-                continue
+            # PoseGraph Optimization
+            o3d.pipelines.registration.global_optimization(
+                pose_graph, o3d.pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
+                o3d.pipelines.registration.GlobalOptimizationConvergenceCriteria(), option)
 
-            fragments.append(fragment_pcd)
+            frag_dataset.transforms = convert_pose_graph_to_transforms(pose_graph=pose_graph) 
 
-    return fragments
+    return fragment_dataset_map
