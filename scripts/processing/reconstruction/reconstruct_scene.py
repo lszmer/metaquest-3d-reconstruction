@@ -1,8 +1,7 @@
 import open3d as o3d
 
 from config.reconstruction_config import ReconstructionConfig
-from dataio.depth_data_io import DepthDataIO
-from dataio.reconstruction_data_io import ReconstructionDataIO
+from dataio.data_io import DataIO
 from models.camera_dataset import DepthDataset
 from models.side import Side
 from models.transforms import CoordinateSystem
@@ -10,21 +9,21 @@ from processing.reconstruction.depth_optimization.depth_pose_optimizer import De
 from processing.reconstruction.utils.o3d_utils import integrate
 
 
-def reconstruct_scene(depth_data_io: DepthDataIO, recon_data_io: ReconstructionDataIO):
+def reconstruct_scene(data_io: DataIO):
     # TODO: Inject as an argument
     config = ReconstructionConfig()
 
     if config.optimize_depth_pose:
         optimizer = DepthPoseOptimizer(
-            depth_data_io=depth_data_io,
-            recon_data_io=recon_data_io,
+            depth_data_io=data_io.depth,
+            recon_data_io=data_io.reconstruction,
             config=config
         )
         depth_dataset_map = optimizer()
     else: 
         depth_dataset_map: dict[Side, DepthDataset] = {}
         for side in Side:
-            dataset = depth_data_io.load_depth_dataset(
+            dataset = data_io.depth.load_depth_dataset(
                 side=side,
                 use_cache=config.fragment_generation.use_dataset_cache
             )
@@ -39,7 +38,7 @@ def reconstruct_scene(depth_data_io: DepthDataIO, recon_data_io: ReconstructionD
     for side, dataset in depth_dataset_map.items():
         vgb = integrate(
             dataset, 
-            depth_data_io, 
+            data_io.depth, 
             side, 
             0.01, 16, 50_000, 1.5, 8.0, o3d.core.Device("CUDA:0")
         )
@@ -48,4 +47,5 @@ def reconstruct_scene(depth_data_io: DepthDataIO, recon_data_io: ReconstructionD
     legacy_pcds = [pcd.to_legacy() for pcd in pcds]
 
     axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
-    o3d.visualization.draw_geometries(legacy_pcds + [axis], window_name="Generated Point Cloud")
+    
+    o3d.visualization.draw_geometries(legacy_pcds + [axis], window_name="Generated Point Cloud") # type: ignore

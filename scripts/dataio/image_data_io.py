@@ -1,11 +1,15 @@
 import json
 import numpy as np
 import cv2
+import pandas as pd
 from scipy.spatial.transform import Rotation as R
 from config.project_path_config import ImagePathConfig
+from dataio.pose_interpolator import PoseInterpolator
 from models.camera_characteristics import CameraCharacteristics
+from models.camera_dataset import CameraDataset
 from models.image_format_info import BaseTime, ImageFormatInfo, ImagePlaneInfo
 from models.side import Side
+from models.transforms import CoordinateSystem, Transforms
 
 
 class ImageDataIO:
@@ -139,4 +143,97 @@ class ImageDataIO:
             cx=cx, cy=cy,
             transl=transl,
             rot_quat=rot_quat,
+        )
+    
+
+    def load_hmd_poses(self) -> pd.DataFrame:
+        hmd_poses_csv_path = self.image_path_config.get_hmd_pose_csv_path()
+
+        if not hmd_poses_csv_path.exists():
+            raise FileNotFoundError(f"HMD poses CSV file not found at {hmd_poses_csv_path}")
+
+        df = pd.read_csv(hmd_poses_csv_path)
+
+        return df
+    
+
+    def load_color_dataset(self, side: Side, use_cache: bool = True) -> CameraDataset:
+        camera_dataset_path = self.image_path_config.get_color_dataset_path(side=side)
+
+        if use_cache and camera_dataset_path.exists():
+            print(f"[Info] Loading cached color dataset for {side.name} from {camera_dataset_path}")
+            
+            try:
+                return CameraDataset.load(camera_dataset_path)
+            except Exception as e:
+                print(f"[Error] Color dataset cache is corrupted or invalid. Rebuilding cache from the original source\n{e}")
+
+        else:
+            print(f"[Info] Color dataset not found for {side.name}. Rebuilding cache from the original source...")
+
+        color_dataset = self.build_color_dataset(side=side)
+        color_dataset.save(camera_dataset_path)
+
+        return color_dataset
+
+
+    def build_color_dataset(self, side: Side) -> CameraDataset:
+        interpolator = PoseInterpolator(
+            pose_csv_path=self.image_path_config.get_hmd_pose_csv_path()
+        )
+        camera_characteristics = self.load_camera_characteristics(side=side)
+
+        directory_path = self.image_path_config.get_rgb_dir(side=side)
+        directory_relative_path = self.image_path_config.get_relative_path(directory_path)
+
+        rgb_filenames = []
+        timestamps = []
+
+        hmd_positions = []
+        hmd_rotations = []
+
+        for path in self.image_path_config.get_rgb_image_paths(side=side):
+            filename = path.name
+            timestamp = int(filename.split('.')[0])
+
+            pose = interpolator.interpolate_pose(timestamp)
+            if pose is None:
+                print(f"[Warning] No pose found for timestamp {timestamp}. Skipping this image.")
+                continue
+
+            rgb_filenames.append(filename)
+            timestamps.append(timestamp)
+
+            position, rotation = pose
+            hmd_positions.append(position)
+            hmd_rotations.append(rotation)        
+
+        hmd_transforms = Transforms(
+            coordinate_system=CoordinateSystem.UNITY,
+            positions=np.array(hmd_positions),
+            rotations=np.array(hmd_rotations)
+        )
+        camera_transforms = hmd_transforms.apply_local_transform(
+            local_position=camera_characteristics.transl,
+            local_rotation=camera_characteristics.rot_quat
+        )
+
+        fxs = np.full_like(timestamps, camera_characteristics.fx)
+        fys = np.full_like(timestamps, camera_characteristics.fy)
+        cxs = np.full_like(timestamps, camera_characteristics.cx)
+        cys = np.full_like(timestamps, camera_characteristics.cy)
+        widths = np.full_like(timestamps, camera_characteristics.width)
+        heights = np.full_like(timestamps, camera_characteristics.height)
+
+        return CameraDataset(
+            directory_relative_path=str(directory_relative_path),
+            image_file_names=np.array(rgb_filenames),
+            timestamps=np.array(timestamps),
+            fx=fxs,
+            fy=fys,
+            cx=cxs,
+            cy=cys,
+            transforms=camera_transforms,
+            widths=widths,
+            heights=heights        
         )

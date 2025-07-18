@@ -60,7 +60,7 @@ class DepthDataIO:
         return bool(is_valid)
     
 
-    def load_depth_dataset(self, side: Side, use_cache: bool) -> DepthDataset:
+    def load_depth_dataset(self, side: Side, use_cache: bool = True) -> DepthDataset:
         if side in self.depth_datasets:
             print(f"[Info] Depth dataset already loaded. Returning loaded dataset...")
             return self.depth_datasets[side]

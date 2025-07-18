@@ -13,7 +13,7 @@ class PipelineProcessor:
 
 
     def convert_yuv_to_rgb(self):
-        convert_yuv_directory(image_io=self.data_io.image, config=self.pipeline_configs.yuv_to_rgb)
+        convert_yuv_directory(image_io=self.data_io.color, config=self.pipeline_configs.yuv_to_rgb)
 
     
     def convert_depth_to_linear(self):
@@ -21,4 +21,9 @@ class PipelineProcessor:
 
 
     def reconstruct_scene(self):
-        reconstruct_scene(depth_data_io=self.data_io.depth, recon_data_io=self.data_io.reconstruction)
+        reconstruct_scene(data_io=self.data_io)
+
+    # Test functions
+    def visualize_camera_trajectories(self):
+        from processing.test.visualize_camera_tragectories import visualize_camera_trajectories
+        visualize_camera_trajectories(data_io=self.data_io)

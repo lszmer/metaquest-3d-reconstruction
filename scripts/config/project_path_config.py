@@ -23,6 +23,13 @@ CAMERA_FORMAT_INFO_JSON_MAP = {
     Side.RIGHT: 'right_camera_image_format.json'
 }
 
+HMD_POSE_CSV_PATH = 'hmd_poses.csv'
+
+COLOR_DATASET_NPZ_MAP = {
+    Side.LEFT: 'dataset/left_camera_dataset.npz',
+    Side.RIGHT: 'dataset/right_camera_dataset.npz',
+}
+
 DEPTH_DIR_MAP = {
     Side.LEFT: 'left_depth',
     Side.RIGHT: 'right_depth'
@@ -83,6 +90,18 @@ class ImagePathConfig:
 
     def get_camera_format_format_json_path(self, side: Side) -> Path:
         return self.project_dir / CAMERA_FORMAT_INFO_JSON_MAP[side]
+    
+
+    def get_hmd_pose_csv_path(self) -> Path:
+        return self.project_dir / HMD_POSE_CSV_PATH
+    
+
+    def get_color_dataset_path(self, side: Side) -> Path:
+        return self.project_dir / COLOR_DATASET_NPZ_MAP[side]
+
+
+    def get_relative_path(self, path: Path) -> Path:
+        return path.relative_to(self.project_dir)
 
 
 class DepthPathConfig:

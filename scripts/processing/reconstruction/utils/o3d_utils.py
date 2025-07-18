@@ -5,12 +5,12 @@ from scipy.spatial.transform import Rotation as R
 from tqdm import tqdm
 
 from dataio.depth_data_io import DepthDataIO
-from models.camera_dataset import DepthDataset
+from models.camera_dataset import CameraDataset, DepthDataset
 from models.side import Side
 from models.transforms import CoordinateSystem, Transforms
 
 
-def compute_o3d_intrinsic_matrices(dataset: DepthDataset) -> np.ndarray:
+def compute_o3d_intrinsic_matrices(dataset: CameraDataset) -> np.ndarray:
     widths = dataset.widths
     intrinsic_matrices = dataset.get_intrinsic_matrices()
     intrinsic_matrices[:, 0, 2] = widths - intrinsic_matrices[:, 0, 2]
