@@ -161,7 +161,7 @@ class ImageDataIO:
         camera_dataset_path = self.image_path_config.get_color_dataset_path(side=side)
 
         if use_cache and camera_dataset_path.exists():
-            print(f"[Info] Loading cached color dataset for {side.name} from {camera_dataset_path}")
+            print(f"[Info] Loading cached color dataset for {side.name} from {camera_dataset_path} ...")
             
             try:
                 return CameraDataset.load(camera_dataset_path)

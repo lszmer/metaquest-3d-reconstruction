@@ -68,7 +68,7 @@ class DepthDataIO:
         depth_dataset_path = self.depth_path_config.get_depth_dataset_path(side=side)
 
         if use_cache and depth_dataset_path.exists():
-            print(f"[Info] Depth dataset cache found. Loading cached dataset...")
+            print(f"[Info] Loading cached depth dataset for {side.name} from {depth_dataset_path} ...")
 
             try:
                 depth_dataset = DepthDataset.load(depth_dataset_path)
