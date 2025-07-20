@@ -49,7 +49,31 @@ class DepthDataIO:
 
         depth_map = convert_depth_to_linear(depth_array, near, far)
 
-        return depth_map        
+        return depth_map
+    
+
+    def load_depth_map_by_index(self,
+        side: Side,
+        dataset: DepthDataset,
+        index: int
+    ) -> Optional[np.ndarray]:
+        if index < 0 or index >= len(dataset.timestamps):
+            return None
+
+        timestamp = dataset.timestamps[index]
+        width = dataset.widths[index]
+        height = dataset.heights[index]
+        near = dataset.nears[index]
+        far = dataset.fars[index]
+
+        return self.load_depth_map(
+            side=side,
+            timestamp=timestamp,
+            width=width,
+            height=height,
+            near=near,
+            far=far
+        )
 
 
     def is_depth_map_valid(self, depth_map: np.ndarray) -> bool:
