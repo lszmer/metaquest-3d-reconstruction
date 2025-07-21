@@ -145,9 +145,12 @@ class DepthPathConfig:
     def get_depth_descriptor_path(self, side: Side) -> Path:
         return self.project_dir / DEPTH_DESCRIPTOR_CSV_MAP[side]
     
+    def get_depth_confidence_map_dir_path(self, side: Side) -> Path:
+        return self.project_dir / DEPTH_CONFIDENCE_MAP_DIR_MAP[side]
+    
 
     def get_depth_confidence_map_path(self, side: Side, timestamp: int) -> Path:
-        return self.project_dir / DEPTH_CONFIDENCE_MAP_DIR_MAP[side] / f"{timestamp}.npz"
+        return self.get_depth_confidence_map_dir_path(side=side) / f"{timestamp}.npz"
     
 
     def get_depth_dataset_path(self, side: Side) -> Path:

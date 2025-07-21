@@ -117,6 +117,10 @@ def estimate_depth_confidences(
     config: DepthConfidenceEstimationConfig,
 ):
     for side in Side:
+        if config.skip_if_output_dir_exists and depth_data_io.exists_depth_confidence_map_dir(side=side):
+            print(f"[{side.name}] Skipping confidence map estimation: output directory already exists. Set skip_if_output_dir_exists = False to force re-estimation.")
+            continue
+
         dataset = depth_data_io.load_depth_dataset(side=side)
 
         intrinsic_matrices = compute_o3d_intrinsic_matrices(dataset=dataset)

@@ -85,6 +85,10 @@ class DepthDataIO:
         return bool(is_valid)
     
 
+    def exists_depth_confidence_map_dir(self, side: Side) -> bool:
+        return self.depth_path_config.get_depth_confidence_map_dir_path(side=side).exists()
+     
+
     def load_confidence_map(self, side: Side, timestamp: int) -> Optional[ConfidenceMap]:
         confidence_map_path = self.depth_path_config.get_depth_confidence_map_path(side=side, timestamp=timestamp)
 
