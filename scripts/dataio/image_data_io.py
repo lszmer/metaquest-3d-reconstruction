@@ -44,7 +44,9 @@ class ImageDataIO:
     def load_rgb(self, side: Side, timestamp: int) -> np.ndarray:
         rgb_dir = self.image_path_config.get_rgb_dir(side=side)
         file_path = rgb_dir / f'{timestamp}.png'
-        bgr = cv2.imread(file_path)
+        bgr = cv2.imread(str(file_path))
+        if bgr is None:
+            raise FileNotFoundError(f"Image file not found or cannot be read: {file_path}")
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     
 

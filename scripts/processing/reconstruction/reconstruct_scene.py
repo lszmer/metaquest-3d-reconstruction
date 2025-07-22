@@ -6,6 +6,7 @@ from dataio.data_io import DataIO
 from models.camera_dataset import DepthDataset
 from models.side import Side
 from models.transforms import CoordinateSystem
+from processing.reconstruction.color_map_optimization.optimize_color_pose import optimize_color_pose
 from processing.reconstruction.confidence_estimation.estimate_depth_confidences import estimate_depth_confidences
 from processing.reconstruction.depth_optimization.depth_pose_optimizer import DepthPoseOptimizer
 from processing.reconstruction.utils.log_utils import log_step
@@ -15,6 +16,12 @@ from processing.reconstruction.utils.o3d_utils import integrate
 def reconstruct_scene(data_io: DataIO):
     # TODO: Inject as an argument
     config = ReconstructionConfig()
+
+    # Dataset generation
+    if not config.use_dataset_cache:
+        for side in Side:
+            data_io.depth.load_depth_dataset(side=side, use_cache=False)
+            data_io.color.load_color_dataset(side=side, use_cache=False)
 
     # Depth confidence estimation
     if config.estimate_depth_confidences:
@@ -78,12 +85,20 @@ def reconstruct_scene(data_io: DataIO):
 
     data_io.rgbd.save_colorless_vbg(vbg=vbg)
 
-    print("[Info] Visualizing the generated point cloud...")
-    pcds = []
-    pcds.append(vbg.extract_point_cloud())
+    if config.visualize_colorless_pcd:
+        print("[Info] Visualizing colorless point cloud ...")
 
-    legacy_pcds = [pcd.to_legacy() for pcd in pcds]
+        pcds = [vbg.extract_point_cloud().to_legacy()]
+        axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
+        o3d.visualization.draw_geometries(pcds + [axis], window_name="Colorless Point Cloud") # type: ignore        
 
-    axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
-    
-    o3d.visualization.draw_geometries(legacy_pcds + [axis], window_name="Generated Point Cloud") # type: ignore
+    # Color map optimization
+    if config.optimize_color_pose:
+        log_step("Optimize color maps")
+        colored_mesh, optimized_color_dataset_map = optimize_color_pose(vbg=vbg, data_io=data_io, config=config.color_optimization)
+
+        if config.visualize_colored_mesh:
+            print("[Info] Visualizing colored mesh ...")
+            pcds = [colored_mesh]
+            axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
+            o3d.visualization.draw_geometries(pcds + [axis], window_name="Colored Mesh") # type: ignore        

@@ -18,6 +18,8 @@ class DepthConfidenceEstimationConfig:
 
 @dataclass
 class FragmentGenerationConfig:
+    device: o3d.core.Device
+
     fragment_size: int = 100
 
     use_confidence_filtered_depth: bool = True
@@ -31,14 +33,14 @@ class FragmentGenerationConfig:
     dist_threshold: float = 0.07
     edge_prune_threshold: float = 0.25
 
-    device: o3d.core.Device = o3d.core.Device("CUDA:0")
-
     use_dataset_cache: bool = True
     use_multi_threading: bool = False
 
 
 @dataclass
 class FragmentPoseRefinementConfig:
+    device: o3d.core.Device
+
     use_confidence_filtered_depth: bool = True
     confidence_threshold: float = 0.05
 
@@ -66,8 +68,6 @@ class FragmentPoseRefinementConfig:
     dist_threshold: float = 0.07
     edge_prune_threshold: float = 0.25
 
-    device: o3d.core.Device = o3d.core.Device("CUDA:0")
-
     use_multi_threading: bool = False
 
     @property
@@ -84,6 +84,8 @@ class FragmentPoseRefinementConfig:
 
 @dataclass
 class IntegrationConfig:
+    device: o3d.core.Device
+
     use_confidence_filtered_depth: bool = True
     confidence_threshold: float = 0.05
     voxel_size: float = 0.01
@@ -91,22 +93,48 @@ class IntegrationConfig:
     block_count: int = 50_000
     depth_max: float = 1.5
     trunc_voxel_multiplier: float = 8.0
-    device: o3d.core.Device = o3d.core.Device("CUDA:0")
+
+
+@dataclass
+class ColorOptimizationConfig:
+    device: o3d.core.Device
+
+    weight_threshold: float = 3.0
+    estimated_vertex_number: int = -1
+
+    interval: int = 10
+    max_iteration: int = 100
+
+    use_dataset_cache: bool = True
 
 
 @dataclass
 class ReconstructionConfig:
-    confidence_estimation: DepthConfidenceEstimationConfig = DepthConfidenceEstimationConfig()
-    fragment_generation: FragmentGenerationConfig = FragmentGenerationConfig()
-    fragment_pose_refinement: FragmentPoseRefinementConfig = FragmentPoseRefinementConfig()
-    depth_integration: IntegrationConfig = IntegrationConfig()
+    device: o3d.core.Device = o3d.core.Device("CUDA:0")
 
+    # Step 0: Dataset generation
+    use_dataset_cache: bool = True
+
+    # Step 1: Depth confidence estimation
     estimate_depth_confidences: bool = True
 
+    # Step 2: Depth pose optimization
     optimize_depth_pose: bool = True
     use_fragment_dataset_cache: bool = True
     use_optimized_dataset_cache: bool = True
 
+    # Step 3: TSDF integration
     use_colorless_vbg_cache: bool = True
+    visualize_colorless_pcd: bool = True
+    
+    # Step 4: Color map optimization
+    optimize_color_pose: bool = True
+    visualize_colored_mesh: bool = True
 
-    generate_color_aligned_depth_maps: bool = True
+
+    def __init__(self):
+        self.confidence_estimation = DepthConfidenceEstimationConfig()
+        self.fragment_generation = FragmentGenerationConfig(device=self.device)
+        self.fragment_pose_refinement = FragmentPoseRefinementConfig(device=self.device)
+        self.depth_integration = IntegrationConfig(device=self.device)
+        self.color_optimization = ColorOptimizationConfig(device=self.device)
