@@ -14,10 +14,7 @@ from processing.reconstruction.utils.log_utils import log_step
 from processing.reconstruction.utils.o3d_utils import integrate, raycast_in_color_view
 
 
-def reconstruct_scene(data_io: DataIO):
-    # TODO: Inject as an argument
-    config = ReconstructionConfig()
-
+def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
     # Dataset generation
     if not config.use_dataset_cache:
         for side in Side:

@@ -3,6 +3,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from config.depth_to_linear_config import Depth2LinearConfig
+from config.reconstruction_config import ReconstructionConfig
 from config.yuv_to_rgb_config import Yuv2RgbConfig
 
 
@@ -10,6 +11,7 @@ from config.yuv_to_rgb_config import Yuv2RgbConfig
 class PipelineConfigs:
     yuv_to_rgb: Yuv2RgbConfig
     depth_to_linear: Depth2LinearConfig
+    reconstruction: ReconstructionConfig
 
 
     @classmethod
@@ -19,8 +21,10 @@ class PipelineConfigs:
 
         yuv_to_rgb = Yuv2RgbConfig.parse(config_dict['yuv_to_rgb'])
         depth_to_linear = Depth2LinearConfig.parse(config_dict['depth_to_linear'])
+        reconstruction = ReconstructionConfig.parse(config_dict['reconstruction'])
 
         return PipelineConfigs(
             yuv_to_rgb=yuv_to_rgb,
             depth_to_linear=depth_to_linear,
+            reconstruction=reconstruction
         )
