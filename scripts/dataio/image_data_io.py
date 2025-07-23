@@ -43,8 +43,7 @@ class ImageDataIO:
     
 
     def load_rgb(self, side: Side, timestamp: int) -> np.ndarray:
-        rgb_dir = self.image_path_config.get_rgb_dir(side=side)
-        file_path = rgb_dir / f'{timestamp}.png'
+        file_path = self.image_path_config.get_rgb_file_path(side=side, timestamp=timestamp)
         bgr = cv2.imread(str(file_path))
         if bgr is None:
             raise FileNotFoundError(f"Image file not found or cannot be read: {file_path}")
@@ -57,10 +56,8 @@ class ImageDataIO:
 
 
     def save_bgr(self, bgr: np.ndarray, side: Side, timestamp: int):
-        rgb_dir = self.image_path_config.get_rgb_dir(side=side)
-        rgb_dir.mkdir(parents=True, exist_ok=True)
-
-        file_path = rgb_dir / f'{timestamp}.png'
+        file_path = self.image_path_config.get_rgb_file_path(side=side, timestamp=timestamp)
+        file_path.mkdir(parents=True, exist_ok=True)
 
         cv2.imwrite(str(file_path), bgr)
 
@@ -244,6 +241,9 @@ class ImageDataIO:
         cys = np.full_like(timestamps, camera_characteristics.cy)
         widths = np.full_like(timestamps, camera_characteristics.width)
         heights = np.full_like(timestamps, camera_characteristics.height)
+
+        if len(rgb_filenames) == 0:
+            raise Exception(f"[Error] RGB image not found. Please make sure the YUV-to-RGB conversion has been performed.")
 
         return CameraDataset(
             directory_relative_path=str(directory_relative_path),

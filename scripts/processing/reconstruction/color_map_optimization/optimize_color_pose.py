@@ -12,7 +12,7 @@ def optimize_color_pose(
     vbg: o3d.t.geometry.VoxelBlockGrid,
     data_io: DataIO,
     config: ColorOptimizationConfig
-):
+) -> tuple[o3d.geometry.TriangleMesh, dict[Side, CameraDataset]]:
     mesh = vbg.extract_triangle_mesh(
         weight_threshold=config.weight_threshold,
         estimated_vertex_number=config.estimated_vertex_number

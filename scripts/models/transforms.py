@@ -54,6 +54,16 @@ class Transforms:
     @property
     def extrinsics_cw(self) -> np.ndarray:
         return self.to_extrinsic_matrices(mode=ExtrinsicMode.CameraToWorld)
+    
+
+    @property
+    def rotations_xyzw(self) -> np.ndarray:
+        return self.rotations
+    
+
+    @property
+    def rotations_wxyz(self) -> np.ndarray:
+        return self.rotations[:, [3, 0, 1, 2]]
 
 
     def get_coordinate_transform_matrix(self, source: CoordinateSystem, target: CoordinateSystem) -> np.ndarray:
@@ -91,7 +101,8 @@ class Transforms:
     def convert_coordinate_system(
         self,
         target_coordinate_system: CoordinateSystem,
-        is_camera: bool = False
+        is_camera: bool = False,
+        skip_rotation: bool = False,
     ) -> 'Transforms':
         if self.coordinate_system == target_coordinate_system:
             return self
@@ -100,6 +111,13 @@ class Transforms:
 
         # Apply to positions (world transformation)
         converted_positions = (R_conv @ self.positions.T).T  # (N, 3)
+
+        if skip_rotation:
+            return Transforms(
+                coordinate_system=target_coordinate_system,
+                positions=converted_positions,
+                rotations=self.rotations
+            )
 
         # Apply to rotations
         rotation_matrices = R.from_quat(self.rotations).as_matrix()  # (N, 3, 3)

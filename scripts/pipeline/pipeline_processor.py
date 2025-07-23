@@ -22,8 +22,3 @@ class PipelineProcessor:
 
     def reconstruct_scene(self):
         reconstruct_scene(data_io=self.data_io, config=self.pipeline_configs.reconstruction)
-
-    # Test functions
-    def visualize_camera_trajectories(self):
-        from processing.test.visualize_camera_tragectories import visualize_camera_trajectories
-        visualize_camera_trajectories(data_io=self.data_io)

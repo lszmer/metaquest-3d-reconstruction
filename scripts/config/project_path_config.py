@@ -94,6 +94,10 @@ class ImagePathConfig:
         return self.project_dir / RGB_DIR_MAP[side]
     
 
+    def get_rgb_file_path(self, side: Side, timestamp: int) -> Path:
+        return self.project_dir / RGB_DIR_MAP[side] / f"{timestamp}.png"
+    
+
     def get_rgb_image_paths(self, side: Side) -> list[Path]:
         rgb_dir = self.get_rgb_dir(side)
         return sorted(rgb_dir.glob("*.png"))
@@ -231,7 +235,7 @@ class ReconstructionPathConfig:
     
 
     def get_colored_pcd_path(self) -> Path:
-        return self.project_dir / "reconstruction/color.pcd"
+        return self.project_dir / "reconstruction/color.ply"
 
     
     def get_relative_path(self, path: Path) -> Path:
