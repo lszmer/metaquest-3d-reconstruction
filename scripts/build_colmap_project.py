@@ -83,8 +83,8 @@ def read_cameras_and_images(data_io: DataIO, dataset_map: dict[Side, CameraDatas
             target_coordinate_system=CoordinateSystem.COLMAP,
             is_camera=True
         )
-        positions = transforms.positions
-        rotations = transforms.rotations_wxyz  # Ensure (w, x, y, z)
+        positions = transforms.positions_cw
+        rotations = transforms.rotations_cw[:, [3, 0, 1, 2]]  # (w, x, y, z)
 
         camera = Camera(
             id=camera_id,
@@ -143,8 +143,6 @@ def read_points_3d(data_io: DataIO) -> dict[int, Point3D]:
         raise Exception("[Error] Colored point cloud not found. Please ensure it has been generated before export.")
     
     print("[Info] Finished reading colored point cloud.")
-    print(type(pcd.point.positions))
-    print(pcd.point.positions.shape)
 
     positions = pcd.point.positions.numpy()
     colors = pcd.point.colors.numpy()

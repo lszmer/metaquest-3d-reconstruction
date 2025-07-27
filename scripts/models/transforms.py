@@ -42,28 +42,91 @@ class ExtrinsicMode(Enum):
 class Transforms:
     coordinate_system: CoordinateSystem
 
-    positions: np.ndarray # shape=(N, 3), axis1=(x, y, z)
-    rotations: np.ndarray # shape=(N, 4), axis1=(x, y, z, w)
+    positions: np.ndarray
+    """
+    Camera positions as (N, 3) array, where each row corresponds to a camera center
+    in world coordinates. Each row is ordered as (x, y, z).
+    """
 
+    rotations: np.ndarray
+    """
+    Camera orientations as (N, 4) array of quaternions, with each row ordered as (x, y, z, w).
+    These define the rotation from the camera frame to the world frame (camera-to-world).
+    """
 
     @property
     def extrinsics_wc(self) -> np.ndarray:
+        """
+        Returns an (N, 4, 4) array of extrinsic matrices representing
+        **World-to-Camera** transformations.
+        """
         return self.to_extrinsic_matrices(mode=ExtrinsicMode.WorldToCamera)
 
 
     @property
     def extrinsics_cw(self) -> np.ndarray:
+        """
+        Returns an (N, 4, 4) array of extrinsic matrices representing
+        **Camera-to-World** transformations.
+        """
         return self.to_extrinsic_matrices(mode=ExtrinsicMode.CameraToWorld)
     
 
     @property
-    def rotations_xyzw(self) -> np.ndarray:
-        return self.rotations
-    
+    def positions_wc(self) -> np.ndarray:
+        """
+        Returns the camera positions in world coordinates.
+        These correspond directly to `self.positions`.
+        """
+        return self.positions
+
 
     @property
-    def rotations_wxyz(self) -> np.ndarray:
-        return self.rotations[:, [3, 0, 1, 2]]
+    def rotations_wc(self) -> np.ndarray:
+        """
+        Returns the camera orientations (as quaternions) representing
+        **Camera-to-World** rotations. These correspond directly to `self.rotations`.
+        """
+        return self.rotations
+
+
+    @property
+    def positions_cw(self) -> np.ndarray:
+        """
+        Returns the world positions expressed in each camera's coordinate system
+        (i.e., **World viewed from Camera**, where origin is camera center).
+        """
+        return -self.apply_rotation(self.positions, self.rotations)
+
+
+    @property
+    def rotations_cw(self) -> np.ndarray:
+        """
+        Returns the inverse of the camera-to-world quaternions,
+        representing **World-to-Camera** rotations.
+        """
+        return self.invert_quaternions(self.rotations)
+    
+
+    def apply_rotation(self, positions: np.ndarray, rotations: np.ndarray) -> np.ndarray:
+        """
+        Rotates the given world positions by the inverse of the provided quaternions.
+        Used to convert world-space positions to camera-local coordinates.
+        """
+        # (x, y, z, w) quaternions assumed
+        from scipy.spatial.transform import Rotation as R
+        r = R.from_quat(rotations)
+        return r.inv().apply(positions)
+
+
+    def invert_quaternions(self, q: np.ndarray) -> np.ndarray:
+        """
+        Returns the inverse of the input quaternions.
+        Assumes input shape is (N, 4) in (x, y, z, w) format.
+        """
+        q_inv = q.copy()
+        q_inv[:, :3] *= -1  # negate x, y, z
+        return q_inv
 
 
     def get_coordinate_transform_matrix(self, source: CoordinateSystem, target: CoordinateSystem) -> np.ndarray:
