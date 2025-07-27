@@ -36,6 +36,12 @@ def parse_args():
         action="store_true",
         help="Use optimized color datasets if available."
     )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=1,
+        help="Sampling interval for image export. Use every N-th image."
+    )
 
     args = parser.parse_args()
 
@@ -69,7 +75,12 @@ def load_dataset_map(data_io: DataIO, use_optimized_color_dataset: bool = True) 
     return dataset_map
 
 
-def read_cameras_and_images(data_io: DataIO, dataset_map: dict[Side, CameraDataset], input_dir: Path) -> tuple[dict[int, Camera], dict[int, Image]]:
+def read_cameras_and_images(
+    data_io: DataIO, 
+    dataset_map: dict[Side, CameraDataset], 
+    input_dir: Path,
+    interval: int = 1
+) -> tuple[dict[int, Camera], dict[int, Image]]:
     cameras = {}
     images = {}
 
@@ -78,6 +89,8 @@ def read_cameras_and_images(data_io: DataIO, dataset_map: dict[Side, CameraDatas
 
     for side, dataset in dataset_map.items():
         print(f"[{side.name}] Exporting images and camera data ...")
+
+        dataset = dataset[::interval]
 
         transforms = dataset.transforms.convert_coordinate_system(
             target_coordinate_system=CoordinateSystem.COLMAP,
@@ -193,7 +206,8 @@ def main(args):
     cameras, images = read_cameras_and_images(
         data_io=data_io,
         dataset_map=dataset_map,
-        input_dir=input_dir
+        input_dir=input_dir,
+        interval=args.interval
     )
 
     if args.use_colored_pointcloud:
