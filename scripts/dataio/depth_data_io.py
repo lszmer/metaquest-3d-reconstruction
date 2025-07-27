@@ -97,7 +97,7 @@ class DepthDataIO:
                 data = np.load(confidence_map_path)
                 return ConfidenceMap(
                     confidence_map=data['confidence_map'],
-                    valid_mask=data['valid_mask']
+                    valid_count=data['valid_count']
                 )
             except Exception as e:
                 print(f"[Error] Failed to load confidence map for {side.name} at timestamp {timestamp}: {e}")
@@ -110,7 +110,7 @@ class DepthDataIO:
         np.savez(
             confidence_map_path,
             confidence_map=confidence_map.confidence_map,
-            valid_mask=confidence_map.valid_mask
+            valid_count=confidence_map.valid_count
         )
 
 

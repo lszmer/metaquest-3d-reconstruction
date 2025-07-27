@@ -1,6 +1,6 @@
 import open3d as o3d
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import Any
+from typing import Any, get_origin, get_args
 
 
 @dataclass
@@ -19,6 +19,7 @@ class FragmentGenerationConfig:
     fragment_size: int = 100
     use_confidence_filtered_depth: bool = True
     confidence_threshold: float = 0.05
+    valid_count_threshold: int = 4
     depth_max: float = 3.0
     odometry_loop_interval: int = 10
     overlap_ratio_threshold: float = 0.1
@@ -34,6 +35,7 @@ class FragmentPoseRefinementConfig:
     device: o3d.core.Device
     use_confidence_filtered_depth: bool = True
     confidence_threshold: float = 0.05
+    valid_count_threshold: int = 4
     voxel_size: float = 0.01
     block_resolution: int = 16
     block_count: int = 50_000
@@ -73,6 +75,7 @@ class IntegrationConfig:
     device: o3d.core.Device
     use_confidence_filtered_depth: bool = True
     confidence_threshold: float = 0.05
+    valid_count_threshold: int = 4
     voxel_size: float = 0.01
     block_resolution: int = 16
     block_count: int = 50_000
@@ -162,12 +165,32 @@ class ReconstructionConfig:
                     continue
 
                 value = d[f.name]
+                hint = f.type
 
-                if f.type is o3d.core.Device and isinstance(value, str):
+                if hint is o3d.core.Device and isinstance(value, str):
                     value = o3d.core.Device(value)
 
-                elif is_dataclass(f.type) and isinstance(value, dict):
-                    value = init_dataclass(f.type, value, parent_device=parent_device)
+                elif is_dataclass(hint) and isinstance(value, dict):
+                    value = init_dataclass(hint, value, parent_device=parent_device)
+
+                elif hint is float and isinstance(value, str):
+                    value = float(value)
+                elif hint is int and isinstance(value, str):
+                    value = int(value)
+                elif hint is bool and isinstance(value, str):
+                    value = value.lower() in ('true', '1')
+
+                elif get_origin(hint) is list:
+                    subtype = get_args(hint)[0]
+                    if isinstance(value, list):
+                        if subtype is float:
+                            value = [float(v) for v in value]
+                        elif subtype is int:
+                            value = [int(v) for v in value]
+                        elif subtype is str:
+                            value = [str(v) for v in value]
+                        elif subtype is bool:
+                            value = [v.lower() in ('true', '1') if isinstance(v, str) else bool(v) for v in value]
 
                 if f.init:
                     kwargs[f.name] = value

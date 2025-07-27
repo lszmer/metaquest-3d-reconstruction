@@ -66,6 +66,7 @@ def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
                 side=side, 
                 use_confidence_filtered_depth=integration_config.use_confidence_filtered_depth,
                 confidence_threshold=integration_config.confidence_threshold,
+                valid_count_threshold=integration_config.valid_count_threshold,
                 voxel_size=integration_config.voxel_size,
                 block_resolution=integration_config.block_resolution,
                 block_count=integration_config.block_count,
