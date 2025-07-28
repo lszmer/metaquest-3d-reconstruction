@@ -1,23 +1,19 @@
-import os
 import argparse
-import json
 from pathlib import Path
 import shutil
 import numpy as np
-from scipy.spatial.transform import Rotation as R
-import open3d as o3d
 from tqdm import tqdm
-import constants
-from utils.pose_utils import PoseInterpolator, compose_transform
+
+from dataio.data_io import DataIO
+from models.camera_dataset import CameraDataset
+from models.side import Side
+from models.transforms import CoordinateSystem, Transforms
 from third_party.colmap.read_and_write_model import Camera, Image, Point3D, write_model
 
 
-OUTPUT_IMAGE_DIR = "input"
-OUTPUT_MODEL_DIR = "distorted/sparse/0"
-
-
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Export camera and image data to COLMAP format.")
+    
     parser.add_argument(
         "--project_dir", "-p",
         type=Path,
@@ -28,193 +24,201 @@ def parse_args():
         "--output_dir", "-o",
         type=Path,
         required=True,
+        help="Path to the output directory where COLMAP model files will be saved."
+    )
+    parser.add_argument(
+        "--use_colored_pointcloud",
+        action="store_true",
+        help="Include colored 3D point cloud if available."
+    )
+    parser.add_argument(
+        "--use_optimized_color_dataset",
+        action="store_true",
+        help="Use optimized color datasets if available."
     )
     parser.add_argument(
         "--interval",
         type=int,
-        default=5,
-        help="Interval for processing images (default: 5)."
+        default=1,
+        help="Sampling interval for image export. Use every N-th image."
     )
+
     args = parser.parse_args()
+
+    if not args.project_dir.is_dir():
+        parser.error(f"Input directory does not exist: {args.project_dir}")
+
+    if not args.output_dir.exists():
+        print(f"[Info] Output directory does not exist. Creating: {args.output_dir}")
+        args.output_dir.mkdir(parents=True, exist_ok=True)
 
     return args
 
 
-def load_cameras_and_images(project_dir: Path, output_dir: Path, image_interval: int) -> tuple[dict, dict]:
-    def load_camera_characteristics(path: Path) -> dict:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+def load_dataset_map(data_io: DataIO, use_optimized_color_dataset: bool = True) -> dict[Side, CameraDataset]:
+    dataset_map: dict[Side, CameraDataset] = {}
 
-    def create_camera_from_characteristics(camera_id: int, characteristics: dict) -> Camera:
-        array_size = characteristics["sensor"]["activeArraySize"]
-        width = array_size["right"] - array_size["left"]
-        height = array_size["bottom"] - array_size["top"]
+    if use_optimized_color_dataset:
+        for side in Side:
+            dataset = data_io.color.load_optimized_color_dataset(side=side)
+            if dataset is not None:
+                dataset_map[side] = dataset
 
-        intr = characteristics["intrinsics"]
-        params = np.array([intr["fx"], intr["fy"], intr["cx"], intr["cy"]])
-        model = "PINHOLE"
+        if len(dataset_map) == 0:
+            print("[Warning] Optimized color datasets not found. Falling back to original color datasets.")
 
-        return Camera(camera_id, model, width, height, params)
+    if len(dataset_map) == 0:
+        for side in Side:
+            dataset = data_io.color.load_color_dataset(side=side)
+            dataset_map[side] = dataset
 
-    def extract_local_transform(pose: dict) -> tuple[np.ndarray, R]:
-        t = pose.get("translation", [0, 0, 0])
-        q = pose.get("rotation", [0, 0, 0, 1])
-        if len(q) >= 4:
-            quat = [q[0], q[1], q[2], q[3]]
-        else:
-            quat = [0, 0, 0, 1]
-        return np.array(t), R.from_quat(quat).inv()
+    return dataset_map
 
-    def convert_unity_pose_to_colmap(position: np.ndarray, rotation: R) -> tuple[np.ndarray, np.ndarray]:
-        rotation *= R.from_quat([1, 0, 0, 0])
-        rotation = rotation.inv()
 
-        tvec = -rotation.as_matrix() @ position
-        qvec = rotation.as_quat()
+def read_cameras_and_images(
+    data_io: DataIO, 
+    dataset_map: dict[Side, CameraDataset], 
+    input_dir: Path,
+    interval: int = 1
+) -> tuple[dict[int, Camera], dict[int, Image]]:
+    cameras = {}
+    images = {}
 
-        tvec[1] *= -1
-        qvec = np.array((
-            qvec[3],
-            -qvec[0],
-            qvec[1],
-            -qvec[2],
-        ))
+    camera_id = 0
+    image_id = 0
 
-        return tvec, qvec
+    for side, dataset in dataset_map.items():
+        print(f"[{side.name}] Exporting images and camera data ...")
 
-    def process_eye_view(
-        eye: str,
-        camera_id: int,
-        image_start_id: int,
-        image_interval: int,
-        characteristics_json: Path,
-        hmd_pose_csv: Path,
-        color_map_dir: Path,
-        output_image_prefix: str,
-        output_image_dir: Path,
-        cameras: dict,
-        images: dict,
-    ) -> int:
-        characteristics = load_camera_characteristics(characteristics_json)
-        cameras[camera_id] = create_camera_from_characteristics(camera_id, characteristics)
-        local_t, local_r = extract_local_transform(characteristics["pose"])
-        hmd_interpolator = PoseInterpolator(hmd_pose_csv)
+        dataset = dataset[::interval]
 
-        image_id = image_start_id
-        files = sorted(os.listdir(color_map_dir))
-        for filename in tqdm(files[::image_interval], desc=f"Processing {eye} images"):
-            if not filename.endswith(".png"):
-                continue
-            try:
-                timestamp = int(os.path.splitext(filename)[0])
-            except ValueError:
-                continue
-
-            result = hmd_interpolator.interpolate_pose(timestamp)
-            if result is None:
-                continue
-
-            hmd_pos, hmd_rot = result
-            pos, rot = compose_transform(hmd_pos, hmd_rot, local_t, local_r)
-            trans, quat = convert_unity_pose_to_colmap(pos, rot)
-
-            src_image_path = color_map_dir / filename
-            dst_image_name = output_image_prefix + filename
-            dst_image_path = output_image_dir / dst_image_name
-            shutil.copy(src_image_path, dst_image_path)
-
-            images[image_id] = Image(
-                id=image_id,
-                qvec=quat,
-                tvec=trans,
-                camera_id=camera_id,
-                name=dst_image_name,
-                xys=np.empty((0, 2)),
-                point3D_ids=np.empty((0,))
-            )
-            image_id += 1
-
-        return image_id
-
-    # --- Main logic ---
-    cameras, images = {}, {}
-    image_start_id = 0
-    hmd_pose_csv = project_dir / constants.HMD_POSE_CSV
-    output_image_dir = output_dir / OUTPUT_IMAGE_DIR
-    output_image_dir.mkdir(parents=True, exist_ok=True)
-
-    for side in ["left", "right"]:
-        camera_id = 0 if side == "left" else 1
-        characteristics_json = project_dir / getattr(constants, f"{side.upper()}_CAMERA_CHARACTERISTICS_JSON")
-        color_map_dir = project_dir / getattr(constants, f"{side.upper()}_CAMERA_RGB_IMAGE_DIR")
-        output_image_prefix = f"{side}_"
-
-        image_start_id = process_eye_view(
-            eye=side,
-            camera_id=camera_id,
-            image_start_id=image_start_id,
-            image_interval=image_interval,
-            characteristics_json=characteristics_json,
-            hmd_pose_csv=hmd_pose_csv,
-            color_map_dir=color_map_dir,
-            output_image_prefix=output_image_prefix,
-            output_image_dir=output_image_dir,
-            cameras=cameras,
-            images=images,
+        transforms = dataset.transforms.convert_coordinate_system(
+            target_coordinate_system=CoordinateSystem.COLMAP,
+            is_camera=True
         )
+        positions = transforms.positions_cw
+        rotations = transforms.rotations_cw[:, [3, 0, 1, 2]]  # (w, x, y, z)
+
+        camera = Camera(
+            id=camera_id,
+            model="PINHOLE",
+            width=dataset.widths[0],
+            height=dataset.heights[0],
+            params=np.array([
+                dataset.fx[0],
+                dataset.fy[0],
+                dataset.cx[0],
+                dataset.cy[0]
+            ])
+        )
+        cameras[camera_id] = camera
+
+        for i in tqdm(range(len(dataset)), desc=f"[{side.name}] Copying images", unit="img"):
+            try:
+                timestamp = dataset.timestamps[i]
+                dst_filename = f"{side.name}_{timestamp}.png"
+
+                src_path = data_io.path_config.image.get_rgb_file_path(side=side, timestamp=timestamp)
+                dst_path = input_dir / dst_filename
+
+                shutil.copy2(src=src_path, dst=dst_path)
+
+                image = Image(
+                    id=image_id,
+                    qvec=rotations[i],
+                    tvec=positions[i],
+                    camera_id=camera_id,
+                    name=dst_filename,
+                    xys=np.empty((0, 2)),
+                    point3D_ids=np.empty((0,)),
+                )
+
+                images[image_id] = image
+                image_id += 1
+
+            except FileNotFoundError:
+                print(f"[Error] RGB image not found at path: {src_path}")
+                continue
+            except Exception as e:
+                print(f"[Error] Unexpected error while copying: {e}")
+                continue
+
+        camera_id += 1
 
     return cameras, images
 
-            
-def load_point_cloud_as_points3D(project_dir):
-    pcd_file = project_dir / constants.COLORED_PCD
 
-    pcd = o3d.io.read_point_cloud(pcd_file)
-    points = np.asarray(pcd.points)
-    colors = np.asarray(pcd.colors)
+def read_points_3d(data_io: DataIO) -> dict[int, Point3D]:
+    print("[Info] Reading colored point cloud ...")
 
-    # Convert Open3D point coordinates to COLMAP coordinate system
-    points[:, 1] *= -1
-    points[:, 2] *= -1
-    colors = (colors * 255).round().astype(np.uint8)
+    pcd = data_io.reconstruction.load_colored_pcd()
+    if pcd is None:
+        raise Exception("[Error] Colored point cloud not found. Please ensure it has been generated before export.")
+    
+    print("[Info] Finished reading colored point cloud.")
 
-    points3D = {}
+    positions = pcd.point.positions.numpy()
+    colors = pcd.point.colors.numpy()
 
-    for i in tqdm(range(len(points)), desc="Converting to Point3D"):
-        point = points[i]
-        color = colors[i]
+    positions = Transforms(
+        coordinate_system=CoordinateSystem.OPEN3D,
+        positions=positions,
+        rotations=np.empty(())
+    ).convert_coordinate_system(
+        target_coordinate_system=CoordinateSystem.COLMAP,
+        is_camera=False,
+        skip_rotation=True
+    ).positions
 
+    point3D_id = 0
+    points3D: dict[int, Point3D] = {}
+
+    for position, color in tqdm(zip(positions, colors), desc="[Info] Creating 3D points", unit="pt", total=len(positions)):
         point3D = Point3D(
-            id=i,
-            xyz=point,
+            id=point3D_id,
+            xyz=position,
             rgb=color,
-            error=0,
+            error=0.0,
             image_ids=np.array([], dtype=np.int64),
             point2D_idxs=np.array([], dtype=np.int64),
         )
-
-        points3D[i] = point3D
+        points3D[point3D_id] = point3D
+        point3D_id += 1
 
     return points3D
 
 
 def main(args):
-    project_dir = args.project_dir
-    print(f"[Info] Project path: {project_dir}")
-    
-    output_dir = args.output_dir
-    print(f"[Info] Output COLMAP Project path: {output_dir}")
-    
-    model_dir = output_dir / OUTPUT_MODEL_DIR
-    model_dir.mkdir(parents=True, exist_ok=True)
+    data_io = DataIO(project_dir=args.project_dir)
+    dataset_map = load_dataset_map(
+        data_io=data_io,
+        use_optimized_color_dataset=args.use_optimized_color_dataset
+    )
 
-    cameras, images = load_cameras_and_images(project_dir, output_dir, args.interval)
-    points3D = load_point_cloud_as_points3D(project_dir)
+    print(f"[Info] Output COLMAP project will be saved to: {args.output_dir}")
+
+    model_dir = args.output_dir / "distorted/sparse/0"
+    input_dir = args.output_dir / "images"
+
+    model_dir.mkdir(parents=True, exist_ok=True)
+    input_dir.mkdir(parents=True, exist_ok=True)
+
+    cameras, images = read_cameras_and_images(
+        data_io=data_io,
+        dataset_map=dataset_map,
+        input_dir=input_dir,
+        interval=args.interval
+    )
+
+    if args.use_colored_pointcloud:
+        points3d = read_points_3d(data_io=data_io)
+    else:
+        points3d = {}
 
     write_model(
         cameras=cameras,
         images=images,
-        points3D=points3D,
+        points3D=points3d,
         path=model_dir,
         ext=".bin"
     )
@@ -222,4 +226,5 @@ def main(args):
 
 if __name__ == "__main__":
     args = parse_args()
+    print(f"[Info] Project directory: {args.project_dir}")
     main(args)

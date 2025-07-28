@@ -32,9 +32,9 @@ def main(args):
         config_yml_path=args.config
     )
 
-    print("[Info] Converting YUV to RGB...")
-    processor.convert_yuv_to_rgb()
-    print("[Info] Conversion completed.")
+    print("[Info] Reconstructing scene...")
+    processor.reconstruct_scene()
+    print("[Info] Reconstruction completed.")
 
 
 if __name__ == "__main__":

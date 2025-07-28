@@ -1,18 +1,7 @@
 import cv2
 import numpy as np
-from dataclasses import dataclass
+from models.image_format_info import ImageFormatInfo
 
-@dataclass
-class ImagePlaneInfo:
-    bufferSize: int
-    rowStride: int
-    pixelStride: int
-
-@dataclass
-class ImageFormatInfo:
-    width: int
-    height: int
-    planes: list[ImagePlaneInfo]
 
 def reconstruct_plane(data, offset, width, height, row_stride, pixel_stride):
     plane = np.frombuffer(data, dtype=np.uint8)
@@ -26,8 +15,9 @@ def reconstruct_plane(data, offset, width, height, row_stride, pixel_stride):
 
     return output
 
+
 def convert_yuv420_888_to_i420(
-        raw_data: bytes, 
+        raw_data: np.ndarray, 
         format_info: ImageFormatInfo, 
         uv_order="NV12"
     ):
@@ -38,17 +28,17 @@ def convert_yuv420_888_to_i420(
     if len(planes) != 3:
         raise ValueError("Expected 3 planes for YUV420_888 format")
 
-    y_plane = reconstruct_plane(raw_data, 0, width, height, planes[0].rowStride, planes[0].pixelStride)
-    u_offset = planes[0].bufferSize
+    y_plane = reconstruct_plane(raw_data, 0, width, height, planes[0].row_stride, planes[0].pixel_stride)
+    u_offset = planes[0].buffer_size
     chroma_width = width // 2
     chroma_height = height // 2
-    pixel_stride_uv = planes[1].pixelStride
-    row_stride_uv = planes[1].rowStride
+    pixel_stride_uv = planes[1].pixel_stride
+    row_stride_uv = planes[1].row_stride
 
     if pixel_stride_uv == 1:
         u_plane = reconstruct_plane(raw_data, u_offset, chroma_width, chroma_height, row_stride_uv, 1)
-        v_offset = u_offset + planes[1].bufferSize
-        v_plane = reconstruct_plane(raw_data, v_offset, chroma_width, chroma_height, planes[2].rowStride, 1)
+        v_offset = u_offset + planes[1].buffer_size
+        v_plane = reconstruct_plane(raw_data, v_offset, chroma_width, chroma_height, planes[2].row_stride, 1)
     else:
         uv_interleaved = np.frombuffer(raw_data, dtype=np.uint8)
         u_plane = np.empty((chroma_height, chroma_width), dtype=np.uint8)
@@ -66,8 +56,9 @@ def convert_yuv420_888_to_i420(
 
     return np.concatenate([y_plane.ravel(), u_plane.ravel(), v_plane.ravel()])
 
+
 def convert_yuv420_888_to_bgr(
-        raw_data: bytes, 
+        raw_data: np.ndarray, 
         format_info: ImageFormatInfo, 
         uv_order="NV12"
     ):
@@ -84,21 +75,16 @@ def measure_blur_laplacian(img_gray):
     return cv2.Laplacian(img_gray, cv2.CV_64F).var()
 
 
-def is_over_or_under_exposed(img_gray, low_thresh=0.02, high_thresh=0.98):
+def is_over_or_under_exposed(img_gray, low_thresh=0.02, high_thresh=0.02):
     hist = cv2.calcHist([img_gray], [0], None, [256], [0, 256])
     hist = hist.ravel() / hist.sum()
     cum = np.cumsum(hist)
 
-    return cum[5] > low_thresh or (1 - cum[250]) > high_thresh
+    return cum[5] > low_thresh or cum[250] < high_thresh
 
 
-def is_valid_image(img_bgr, blur_threshold=50.0, exposure_threshold_low=0.02, exposure_threshold_high=0.98):
+def is_blur_image(img_bgr, blur_threshold=50.0):
     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     blur_score = measure_blur_laplacian(img_gray)
 
-    if blur_score < blur_threshold:
-        return False
-    if is_over_or_under_exposed(img_gray, low_thresh=exposure_threshold_low, high_thresh=exposure_threshold_high):
-        return False
-    
-    return True
+    return blur_score < blur_threshold

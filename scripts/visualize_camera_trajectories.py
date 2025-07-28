@@ -1,7 +1,8 @@
 import argparse
 from pathlib import Path
 
-from pipeline.pipeline_processor import PipelineProcessor
+from dataio.data_io import DataIO
+from processing.test.visualize_camera_tragectories import visualize_camera_trajectories
 
 
 def parse_args():
@@ -12,12 +13,6 @@ def parse_args():
         required=True,
         help="Path to the project directory containing QRC data."
     )
-    parser.add_argument(
-        "--config", "-c",
-        type=Path,
-        default='config/pipeline_config.yml',
-        help="Path to the YAML config file for the pipeline"
-    )
     args = parser.parse_args()
 
     if not args.project_dir.is_dir():
@@ -27,14 +22,8 @@ def parse_args():
 
 
 def main(args):
-    processor = PipelineProcessor(
-        project_dir=args.project_dir,
-        config_yml_path=args.config
-    )
-
-    print("[Info] Converting YUV to RGB...")
-    processor.convert_yuv_to_rgb()
-    print("[Info] Conversion completed.")
+    data_io = DataIO(project_dir=args.project_dir)
+    visualize_camera_trajectories(data_io=data_io)
 
 
 if __name__ == "__main__":

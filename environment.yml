@@ -2,6 +2,7 @@ name: mq3drecon
 channels:
   - defaults
   - conda-forge
+  - pytorch
 dependencies:
   - python=3.10
   - numpy
@@ -9,11 +10,10 @@ dependencies:
   - pandas
   - tqdm
   - opencv
+  - cudatoolkit=11.8
+  - pyyaml
   - pip
   - pip:
       - open3d==0.19.0
-      - torchaudio==2.7.0+cu128
-      - torch==2.7.0+cu128
-      - torchvision==0.22.0+cu128
       - requests
       - matplotlib
