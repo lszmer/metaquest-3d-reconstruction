@@ -110,7 +110,8 @@ def build_pose_graph_for_fragment(
         dataset=frag_dataset,
         device=config.device,
         use_confidence_filtered_depth=config.use_confidence_filtered_depth,
-        confidence_threshold=config.confidence_threshold
+        confidence_threshold=config.confidence_threshold,
+        valid_count_threshold=config.valid_count_threshold,
     )
     extrinsic_curr_cw = extrinsics_cw[0]
 
@@ -122,7 +123,8 @@ def build_pose_graph_for_fragment(
             dataset=frag_dataset,
             device=config.device,
             use_confidence_filtered_depth=config.use_confidence_filtered_depth,
-            confidence_threshold=config.confidence_threshold
+            confidence_threshold=config.confidence_threshold,
+            valid_count_threshold=config.valid_count_threshold,
         )
         extrinsic_next_wc = extrinsics_wc[i + 1]
 
@@ -176,7 +178,8 @@ def build_pose_graph_for_fragment(
             dataset=frag_dataset, 
             device=config.device,
             use_confidence_filtered_depth=config.use_confidence_filtered_depth,
-            confidence_threshold=config.confidence_threshold
+            confidence_threshold=config.confidence_threshold,
+            valid_count_threshold=config.valid_count_threshold,
         )
         extrinsic_curr_cw = extrinsics_cw[key_i]
 
@@ -192,7 +195,8 @@ def build_pose_graph_for_fragment(
                 dataset=frag_dataset, 
                 device=config.device,
                 use_confidence_filtered_depth=config.use_confidence_filtered_depth,
-                confidence_threshold=config.confidence_threshold
+                confidence_threshold=config.confidence_threshold,
+                valid_count_threshold=config.valid_count_threshold,
             )
             extrinsic_next_cw = extrinsics_cw[key_j]
             extrinsic_next_wc = extrinsics_wc[key_j]

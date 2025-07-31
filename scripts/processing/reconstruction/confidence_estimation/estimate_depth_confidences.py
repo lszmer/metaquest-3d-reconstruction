@@ -75,7 +75,7 @@ def build_confidence_map(
 
     return ConfidenceMap(
         confidence_map=confidence_map,
-        valid_mask=valid_count > 0
+        valid_count=valid_count
     )
 
 

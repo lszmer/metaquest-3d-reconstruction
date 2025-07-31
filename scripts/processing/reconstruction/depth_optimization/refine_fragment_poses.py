@@ -23,6 +23,7 @@ def integrate_fragment_point_cloud(
         side=side,
         use_confidence_filtered_depth=config.use_confidence_filtered_depth,
         confidence_threshold=config.confidence_threshold,
+        valid_count_threshold=config.valid_count_threshold,
         voxel_size=config.voxel_size,
         block_resolution=config.block_resolution,
         block_count=config.block_count,

@@ -38,6 +38,7 @@ reconstruction:
     fragment_size: 100  # Number of frames per fragment
     use_confidence_filtered_depth: true  # Use only confident depth pixels for pose estimation
     confidence_threshold: 0.05  # Minimum confidence score to keep a depth pixel
+    valid_count_threshold: 4 # Minimum number of supporting observations required to consider a depth pixel valid
     depth_max: 3.0  # Max depth value used for fragment-level processing
     odometry_loop_interval: 10  # Frequency (in fragments) to check for loop closure
     overlap_ratio_threshold: 0.1  # Overlap ratio threshold to consider loop candidates
@@ -49,6 +50,7 @@ reconstruction:
   fragment_pose_refinement:
     use_confidence_filtered_depth: true
     confidence_threshold: 0.05
+    valid_count_threshold: 4 # Minimum number of supporting observations required to consider a depth pixel valid
     voxel_size: 0.01  # TSDF voxel size
     block_resolution: 16  # Resolution of each voxel block (in voxels)
     block_count: 50000  # Total number of blocks in the TSDF volume
@@ -73,6 +75,7 @@ reconstruction:
   depth_integration:
     use_confidence_filtered_depth: true
     confidence_threshold: 0.05
+    valid_count_threshold: 4
     voxel_size: 0.01
     block_resolution: 16
     block_count: 50000

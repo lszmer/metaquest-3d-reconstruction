@@ -6,7 +6,7 @@ import numpy as np
 @dataclass
 class ConfidenceMap:
     confidence_map: np.ndarray
-    valid_mask: np.ndarray
+    valid_count: np.ndarray
 
     @property
     def width(self) -> int:
@@ -26,7 +26,7 @@ class ConfidenceMap:
 
 
     def __post_init__(self):
-        if self.confidence_map.shape != self.valid_mask.shape:
+        if self.confidence_map.shape != self.valid_count.shape:
             raise ValueError("Confidence map and valid mask must have the same shape.")
         if self.confidence_map.ndim != 2:
             raise ValueError("Confidence map must be a 2D array.")
