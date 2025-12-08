@@ -10,6 +10,7 @@ class PipelineProcessor:
     def __init__(self, project_dir: Path, config_yml_path: Path):
         self.data_io = DataIO(project_dir=project_dir)
         self.pipeline_configs = PipelineConfigs.parse_config_yml(config_yml_path)
+        self.project_dir = project_dir
 
 
     def convert_yuv_to_rgb(self):
@@ -22,3 +23,25 @@ class PipelineProcessor:
 
     def reconstruct_scene(self):
         reconstruct_scene(data_io=self.data_io, config=self.pipeline_configs.reconstruction)
+    
+    
+    def run_full_pipeline(self):
+        """
+        Run the complete pipeline: YUV->RGB, depth->linear, and reconstruction.
+        """
+        print("\n" + "="*80)
+        print("Running Full Pipeline")
+        print("="*80)
+        
+        print("\n[Step 1/3] Converting YUV to RGB...")
+        self.convert_yuv_to_rgb()
+        
+        print("\n[Step 2/3] Converting depth to linear...")
+        self.convert_depth_to_linear()
+        
+        print("\n[Step 3/3] Reconstructing scene...")
+        self.reconstruct_scene()
+        
+        print("\n" + "="*80)
+        print("Pipeline Complete!")
+        print("="*80)

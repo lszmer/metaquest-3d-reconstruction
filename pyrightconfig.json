@@ -1,0 +1,24 @@
+{
+  "venvPath": "/opt/miniconda3/envs",
+  "venv": "mq3drecon",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "pythonVersion": "3.10",
+      "extraPaths": [
+        "scripts"
+      ]
+    }
+  ],
+  "include": [
+    "scripts"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false
+}
+

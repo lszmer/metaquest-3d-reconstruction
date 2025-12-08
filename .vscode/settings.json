@@ -1,7 +1,14 @@
 {
     "python.analysis.extraPaths": ["scripts"],
     "python.analysis.typeCheckingMode": "basic",
+    "python.defaultInterpreterPath": "/opt/miniconda3/envs/mq3drecon/bin/python",
+    "python.condaEnvironmentPath": "/opt/miniconda3/envs/mq3drecon",
     "python-envs.defaultEnvManager": "ms-python.python:conda",
     "python-envs.defaultPackageManager": "ms-python.python:conda",
-    "python-envs.pythonProjects": []
+    "python-envs.pythonProjects": [],
+    "basedpyright.analysis.extraPaths": [
+        "scripts"
+    ],
+    "basedpyright.analysis.typeCheckingMode": "basic",
+    "basedpyright.analysis.pythonVersion": "3.10"
 }
