@@ -325,19 +325,29 @@ def compute_surface_area(mesh: o3d.geometry.TriangleMesh) -> float:
         return float(total_area)
 
 
-def count_holes(mesh: o3d.geometry.TriangleMesh) -> int:
-    """Count the number of holes (boundary loops) in a mesh."""
+def count_holes(mesh: o3d.geometry.TriangleMesh, min_hole_size_ratio: float = 0.01) -> int:
+    """
+    Count the number of significant holes (boundary loops) in a mesh.
+    
+    Args:
+        mesh: Input triangle mesh
+        min_hole_size_ratio: Minimum hole perimeter relative to mesh bounding box diagonal (default: 1%)
+    
+    Returns:
+        Number of holes above the size threshold
+    """
     if len(mesh.triangles) == 0:
         return 0
     
     try:
-        # Get boundary edges
-        edges = mesh.get_non_manifold_edges(allow_boundary_edges=True)
-        # Actually, we need boundary edges specifically
-        # Open3D doesn't have a direct method, so we'll compute manually
-        
         triangles = np.asarray(mesh.triangles)
         vertices = np.asarray(mesh.vertices)
+        
+        # Compute mesh scale (bounding box diagonal) for threshold
+        bbox = mesh.get_axis_aligned_bounding_box()
+        bbox_extent = bbox.get_extent()
+        mesh_diagonal = np.linalg.norm(bbox_extent)
+        min_hole_perimeter = mesh_diagonal * min_hole_size_ratio
         
         # Build edge to triangle mapping
         edge_to_triangles = {}
@@ -369,9 +379,9 @@ def count_holes(mesh: o3d.geometry.TriangleMesh) -> int:
             edge_to_vertices[v0].append(v1)
             edge_to_vertices[v1].append(v0)
         
-        # Count closed loops (holes)
+        # Find all closed loops (holes) and compute their perimeters
         visited_edges = set()
-        num_holes = 0
+        hole_perimeters = []
         
         for start_vertex in list(edge_to_vertices.keys()):
             if start_vertex not in edge_to_vertices:
@@ -391,6 +401,7 @@ def count_holes(mesh: o3d.geometry.TriangleMesh) -> int:
             # Traverse the loop
             current = start_vertex
             next_vertex = unvisited_neighbor
+            loop_vertices = [start_vertex]
             loop_length = 0
             
             while True:
@@ -403,10 +414,18 @@ def count_holes(mesh: o3d.geometry.TriangleMesh) -> int:
                 
                 # Move to next vertex
                 current = next_vertex
+                loop_vertices.append(current)
                 
                 # Check if we've closed the loop
                 if current == start_vertex and loop_length > 2:
-                    num_holes += 1
+                    # Compute hole perimeter
+                    perimeter = 0.0
+                    for i in range(len(loop_vertices) - 1):
+                        v0_idx = loop_vertices[i]
+                        v1_idx = loop_vertices[i + 1]
+                        edge_length = np.linalg.norm(vertices[v0_idx] - vertices[v1_idx])
+                        perimeter += edge_length
+                    hole_perimeters.append(perimeter)
                     break
                 
                 # Find next unvisited neighbor
@@ -425,6 +444,13 @@ def count_holes(mesh: o3d.geometry.TriangleMesh) -> int:
                 if loop_length > len(boundary_edges):
                     break
         
+        # Filter holes by size
+        significant_holes = [p for p in hole_perimeters if p >= min_hole_perimeter]
+        num_holes = len(significant_holes)
+        
+        if len(hole_perimeters) > 0:
+            print(f"[Debug] Found {len(hole_perimeters)} total holes, {num_holes} significant (min perimeter: {min_hole_perimeter:.6f}, mesh diagonal: {mesh_diagonal:.6f})")
+        
         return num_holes
         
     except Exception as e:
@@ -434,26 +460,32 @@ def count_holes(mesh: o3d.geometry.TriangleMesh) -> int:
 
 def compute_surface_area_and_holes(
     scan_mesh: o3d.geometry.TriangleMesh,
-    gt_mesh: o3d.geometry.TriangleMesh
+    gt_mesh: o3d.geometry.TriangleMesh,
+    min_hole_size_ratio: float = 0.01
 ) -> Tuple[float, float, int, int]:
     """
     Compute surface area and hole count for both meshes.
     
+    Args:
+        scan_mesh: Scan mesh
+        gt_mesh: Ground truth mesh
+        min_hole_size_ratio: Minimum hole perimeter relative to mesh bounding box diagonal (default: 1%)
+    
     Returns:
         surface_area_scan: Surface area of scan mesh
         surface_area_gt: Surface area of ground truth mesh
-        num_holes_scan: Number of holes in scan mesh
-        num_holes_gt: Number of holes in ground truth mesh
+        num_holes_scan: Number of significant holes in scan mesh
+        num_holes_gt: Number of significant holes in ground truth mesh
     """
     print("[Info] Computing surface area and hole counts...")
     
     surface_area_scan = compute_surface_area(scan_mesh)
     surface_area_gt = compute_surface_area(gt_mesh)
-    num_holes_scan = count_holes(scan_mesh)
-    num_holes_gt = count_holes(gt_mesh)
+    num_holes_scan = count_holes(scan_mesh, min_hole_size_ratio=min_hole_size_ratio)
+    num_holes_gt = count_holes(gt_mesh, min_hole_size_ratio=min_hole_size_ratio)
     
-    print(f"[Info] Scan surface area: {surface_area_scan:.6f}, holes: {num_holes_scan}")
-    print(f"[Info] GT surface area: {surface_area_gt:.6f}, holes: {num_holes_gt}")
+    print(f"[Info] Scan surface area: {surface_area_scan:.6f}, significant holes: {num_holes_scan}")
+    print(f"[Info] GT surface area: {surface_area_gt:.6f}, significant holes: {num_holes_gt}")
     
     return surface_area_scan, surface_area_gt, num_holes_scan, num_holes_gt
 
