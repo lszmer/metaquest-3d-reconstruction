@@ -244,8 +244,9 @@ class ReconstructionPathConfig:
 
 class ProjectPathConfig:
     def __init__(self, project_dir: Path):
-        self.project_dir = project_dir
-        self.image = ImagePathConfig(project_dir=project_dir)
-        self.depth = DepthPathConfig(project_dir=project_dir)
-        self.rgbd = RGBDPathConfig(project_dir=project_dir)
-        self.reconstruction = ReconstructionPathConfig(project_dir=project_dir)
+        # Ensure project_dir is always an absolute, resolved path
+        self.project_dir = project_dir.resolve()
+        self.image = ImagePathConfig(project_dir=self.project_dir)
+        self.depth = DepthPathConfig(project_dir=self.project_dir)
+        self.rgbd = RGBDPathConfig(project_dir=self.project_dir)
+        self.reconstruction = ReconstructionPathConfig(project_dir=self.project_dir)

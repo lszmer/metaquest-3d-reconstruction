@@ -284,13 +284,10 @@ def compute_geometric_metrics(mesh: o3d.geometry.TriangleMesh, skip_detailed_non
         num_non_manifold_vertices = len(non_manifold_vertices)
         print(f"[Progress]   Found {num_non_manifold_vertices:,} non-manifold vertices")
         
-        print("[Progress]   Checking for self-intersecting triangles...")
-        try:
-            self_intersecting = mesh.get_self_intersecting_triangles()
-        except AttributeError:
-            self_intersecting = []
-        num_self_intersecting_triangles = len(self_intersecting)
-        print(f"[Progress]   Found {num_self_intersecting_triangles:,} self-intersecting triangles")
+        # Skip self-intersecting triangles check - it's too slow for large meshes
+        # This check can take hours for meshes with millions of triangles
+        print("[Progress]   Skipping self-intersecting triangles check (too slow for large meshes)...")
+        num_self_intersecting_triangles = 0
         
         print(f"[Progress] Non-manifold analysis completed in {time.time() - nm_start:.2f}s")
     

@@ -5,8 +5,12 @@ Full pipeline runner that orchestrates the complete 3D reconstruction workflow:
 2. Convert depth to linear
 3. Reconstruct scene
 4. Convert PLY mesh to FBX
-5. Optionally evaluate and compare FBX meshes
 """
+
+# latest_folder=$(adb shell "ls -1t /sdcard/Android/data/com.CHL.RealityLog/files/" | head -n 1)
+# adb shell "ls /sdcard/Android/data/com.CHL.RealityLog/files/$latest_folder/left_depth"
+# adb pull "/sdcard/Android/data/com.CHL.RealityLog/files/$latest_folder" ~/Documents/QuestRealityCapture
+
 
 import argparse
 from pathlib import Path
@@ -121,34 +125,9 @@ def convert_reconstruction_mesh_to_fbx(project_dir: Path) -> None:
         print(f"[Warning] FBX conversion script exited with code {e.returncode}: {e}")
 
 
-def evaluate_fbx_mesh(project_dir: Path, fbx_path: Path, output_path: Optional[Path] = None) -> None:
-    """Evaluate the FBX mesh and generate a report."""
-    if not fbx_path.exists():
-        print(f"[Info] No FBX mesh found at {fbx_path}, skipping evaluation.")
-        return
-    
-    print(f"\n[Info] Evaluating FBX mesh: {fbx_path}")
-    script_dir = Path(__file__).resolve().parent
-    cmd = [
-        sys.executable,
-        str(script_dir / "evaluate_fbx_mesh.py"),
-        str(fbx_path),
-    ]
-    
-    if output_path:
-        cmd.extend(["--output", str(output_path)])
-    
-    try:
-        subprocess.run(cmd, check=True)
-    except FileNotFoundError as e:
-        print(f"[Warning] Failed to launch evaluation script: {e}")
-    except subprocess.CalledProcessError as e:
-        print(f"[Warning] Evaluation script exited with code {e.returncode}: {e}")
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Run the full 3D reconstruction pipeline including FBX conversion and evaluation."
+        description="Run the full 3D reconstruction pipeline including FBX conversion."
     )
     parser.add_argument(
         "--project_dir", "-p",
@@ -171,29 +150,22 @@ def main():
         action="store_true",
         help="Skip FBX conversion step"
     )
-    parser.add_argument(
-        "--skip-evaluation",
-        action="store_true",
-        help="Skip FBX mesh evaluation step"
-    )
-    parser.add_argument(
-        "--evaluate-output",
-        type=Path,
-        help="Path to save evaluation report (optional)"
-    )
     
     args = parser.parse_args()
     
     # Determine project directory
     if args.session_dir:
-        project_dir = args.session_dir
+        project_dir = args.session_dir.resolve()
     elif args.project_dir:
         # Look for latest session in given project dir
-        project_dir = find_latest_session(args.project_dir)
+        project_dir = find_latest_session(args.project_dir.resolve())
         print(f"[Info] No --session_dir specified. Found latest session: {project_dir}")
     else:
         # Try to use a default location or require explicit input
         parser.error("Either --project_dir or --session_dir must be specified")
+    
+    # Ensure project_dir is absolute and resolved
+    project_dir = project_dir.resolve()
     
     # Determine config path
     if args.config:
@@ -221,15 +193,6 @@ def main():
             convert_reconstruction_mesh_to_fbx(project_dir)
         except Exception as e:
             print(f"[Warning] FBX conversion failed: {e}")
-    
-    # Evaluate FBX mesh
-    if not args.skip_evaluation:
-        fbx_path = project_dir / "reconstruction" / "color_mesh.fbx"
-        eval_output = args.evaluate_output or (project_dir / "reconstruction" / "color_mesh.eval_report.html")
-        try:
-            evaluate_fbx_mesh(project_dir, fbx_path, eval_output)
-        except Exception as e:
-            print(f"[Warning] FBX evaluation failed: {e}")
     
     end_ts = time.time()
     

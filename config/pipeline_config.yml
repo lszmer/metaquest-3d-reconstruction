@@ -11,7 +11,7 @@ depth_to_linear:
   use_cache: True # Whether to use the depth dataset cache
 
 reconstruction:
-  device: "CUDA:0"  # Device to run Open3D Tensor operations (e.g., CUDA-enabled GPU)
+  device: "CPU:0"  # Device to run Open3D Tensor operations (CPU:0 or CUDA:0 if CUDA is available)
 
   # pipeline
   use_dataset_cache: true  # Use preprocessed depth/color datasets if available

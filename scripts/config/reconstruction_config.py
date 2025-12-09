@@ -3,6 +3,32 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any, get_origin, get_args
 
 
+def get_available_device(device_str: str) -> o3d.core.Device:
+    """
+    Get an available Open3D device, falling back to CPU if the requested device is not available.
+    
+    Args:
+        device_str: Device string (e.g., "CUDA:0", "CPU:0")
+    
+    Returns:
+        Available device, falling back to CPU:0 if requested device is not available
+    """
+    try:
+        device = o3d.core.Device(device_str)
+        # Try to create a simple tensor to verify the device works
+        test_tensor = o3d.core.Tensor([1.0], device=device)
+        return device
+    except (RuntimeError, ValueError) as e:
+        if "CUDA" in device_str or "cuda" in device_str.lower():
+            print(f"[Warning] CUDA device '{device_str}' is not available. Falling back to CPU:0")
+            print(f"[Warning] Error: {e}")
+            return o3d.core.Device("CPU:0")
+        else:
+            # If it's not CUDA, try CPU as fallback
+            print(f"[Warning] Device '{device_str}' is not available. Falling back to CPU:0")
+            return o3d.core.Device("CPU:0")
+
+
 @dataclass
 class DepthConfidenceEstimationConfig:
     target_frame_range: int = 10
@@ -103,7 +129,7 @@ class ColorAlignedDepthRenderingConfig:
 
 @dataclass
 class ReconstructionConfig:
-    device: o3d.core.Device = o3d.core.Device("CUDA:0")
+    device: o3d.core.Device = o3d.core.Device("CPU:0")
 
     # Step 0: Dataset generation
     use_dataset_cache: bool = True
@@ -168,7 +194,7 @@ class ReconstructionConfig:
                 hint = f.type
 
                 if hint is o3d.core.Device and isinstance(value, str):
-                    value = o3d.core.Device(value)
+                    value = get_available_device(value)
 
                 elif is_dataclass(hint) and isinstance(value, dict):
                     value = init_dataclass(hint, value, parent_device=parent_device)
@@ -212,7 +238,8 @@ class ReconstructionConfig:
             return instance
         
         raw_device = config_dict.get("device", "CPU:0")
-        device = o3d.core.Device(raw_device if isinstance(raw_device, str) else raw_device)
+        device_str = raw_device if isinstance(raw_device, str) else str(raw_device)
+        device = get_available_device(device_str)
 
         config = init_dataclass(cls, config_dict, parent_device=device)
 
