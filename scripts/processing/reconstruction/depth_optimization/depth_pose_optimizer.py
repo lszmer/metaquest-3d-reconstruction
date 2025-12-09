@@ -1,4 +1,5 @@
 from tqdm import tqdm
+import sys
 from config.reconstruction_config import ReconstructionConfig
 from dataio.depth_data_io import DepthDataIO
 from dataio.reconstruction_data_io import ReconstructionDataIO
@@ -53,7 +54,7 @@ class DepthPoseOptimizer:
 
         print("[Info] Saving fragment datasets to cache...")
         for side, frag_datasets in frag_dataset_map.items():
-            for i, frag_dataset in enumerate(tqdm(frag_datasets, desc=f"[{side.name}] Saving fragment datasets...")):
+            for i, frag_dataset in enumerate(tqdm(frag_datasets, desc=f"[{side.name}] Saving fragment datasets...", file=sys.stderr, dynamic_ncols=True, mininterval=0.1)):
                 self.recon_data_io.save_fragment_dataset(dataset=frag_dataset, side=side, index=i)
         print("[Info] Fragment datasets saved successfully.")
 

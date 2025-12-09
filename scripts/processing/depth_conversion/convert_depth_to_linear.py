@@ -1,4 +1,5 @@
 from tqdm import tqdm
+import sys
 import numpy as np
 from config.depth_to_linear_config import Depth2LinearConfig
 from dataio.depth_data_io import DepthDataIO
@@ -14,7 +15,7 @@ def convert_depth_directory(
 
         num_frames = len(dataset.timestamps)
 
-        for i in tqdm(range(num_frames), total=num_frames, desc="Converting depth images"):
+        for i in tqdm(range(num_frames), total=num_frames, desc="Converting depth images", file=sys.stderr, dynamic_ncols=True, mininterval=0.1):
             timestamp = dataset.timestamps[i]
             width = dataset.widths[i]
             height = dataset.heights[i]

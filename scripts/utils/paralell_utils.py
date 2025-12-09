@@ -1,4 +1,5 @@
 import os
+import sys
 import multiprocessing
 
 
@@ -36,13 +37,17 @@ def parallel_map(
         args_iter = args_list
         if show_progress:
             from tqdm import tqdm
-            args_iter = tqdm(args_list, total=len(args_list), desc=desc)
+            args_iter = tqdm(args_list, total=len(args_list), desc=desc, file=sys.stderr, dynamic_ncols=True, mininterval=0.1)
 
         for args in args_iter:
             try:
                 results.append(worker(args))
             except Exception as e:
-                print(f"[Error] {func.__name__} failed: {e}")
+                if show_progress:
+                    from tqdm import tqdm
+                    tqdm.write(f"[Error] {func.__name__} failed: {e}")
+                else:
+                    print(f"[Error] {func.__name__} failed: {e}")
                 results.append(default_on_error)
 
         return results
@@ -57,7 +62,7 @@ def parallel_map(
     with ctx.Pool(processes=max_workers) as pool:
         if show_progress:
             from tqdm import tqdm
-            results = list(tqdm(pool.imap_unordered(worker, args_list), total=len(args_list), desc=desc))
+            results = list(tqdm(pool.imap_unordered(worker, args_list), total=len(args_list), desc=desc, file=sys.stderr, dynamic_ncols=True, mininterval=0.1))
         else:
             results = pool.map(worker, args_list)
 

@@ -1,4 +1,5 @@
 from typing import Optional
+import sys
 import open3d as o3d
 from tqdm import tqdm
 
@@ -149,7 +150,7 @@ def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
         def render_color_aligned_depth_map(dataset: CameraDataset, desc: str = ''):
             depth_map_iter = raycast_in_color_view(scene=scene, dataset=dataset)
 
-            for i in tqdm(range(len(dataset)), desc=desc):
+            for i in tqdm(range(len(dataset)), desc=desc, file=sys.stderr, dynamic_ncols=True, mininterval=0.1):
                 timestamp = dataset.timestamps[i]
                 depth_map = next(depth_map_iter)
 

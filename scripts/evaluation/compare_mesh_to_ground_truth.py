@@ -20,7 +20,6 @@ It also provides visualization capabilities:
 import argparse
 import json
 import sys
-import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional, Tuple
@@ -33,8 +32,6 @@ try:
     from .mesh_loader import load_mesh, mesh_to_point_cloud
 except ImportError:
     # If running as a script, add parent directory to path
-    import sys
-    from pathlib import Path
     script_dir = Path(__file__).resolve().parent
     sys.path.insert(0, str(script_dir.parent))
     from evaluation.mesh_loader import load_mesh, mesh_to_point_cloud
@@ -73,6 +70,12 @@ class ComparisonMetrics:
     # Sampling info
     num_scan_points: int
     num_gt_points: int
+    
+    # Surface area and hole metrics
+    surface_area_scan: float  # Covered area (Fläche) of scan mesh
+    surface_area_gt: float  # Covered area of ground truth mesh
+    num_holes_scan: int  # Number of holes in scan mesh
+    num_holes_gt: int  # Number of holes in ground truth mesh
 
 
 @dataclass
@@ -84,6 +87,17 @@ class ComparisonReport:
     threshold: float  # Distance threshold used for F-score
     warnings: list[str]
     errors: list[str]
+
+
+@dataclass
+class DualComparisonReport:
+    """Comparison report for two scans (fog vs no_fog) against ground truth."""
+    ground_truth_path: Path
+    no_fog_scan_path: Path
+    fog_scan_path: Path
+    no_fog_report: ComparisonReport
+    fog_report: ComparisonReport
+    improvement: dict  # Metrics showing improvement (negative = fog is better)
 
 
 def compute_chamfer_distance(
@@ -98,14 +112,19 @@ def compute_chamfer_distance(
         scan_to_gt_dists: Distances from scan points to GT
         gt_to_scan_dists: Distances from GT points to scan
     """
+    print(f"[Debug] Computing Chamfer distance: scan has {len(scan_pcd.points)} points, GT has {len(gt_pcd.points)} points")
+    
     # Compute distances from scan to GT
     scan_to_gt_dists = np.asarray(scan_pcd.compute_point_cloud_distance(gt_pcd))
+    print(f"[Debug] Scan to GT distances: min={np.min(scan_to_gt_dists):.6f}, max={np.max(scan_to_gt_dists):.6f}, mean={np.mean(scan_to_gt_dists):.6f}, median={np.median(scan_to_gt_dists):.6f}")
     
     # Compute distances from GT to scan
     gt_to_scan_dists = np.asarray(gt_pcd.compute_point_cloud_distance(scan_pcd))
+    print(f"[Debug] GT to scan distances: min={np.min(gt_to_scan_dists):.6f}, max={np.max(gt_to_scan_dists):.6f}, mean={np.mean(gt_to_scan_dists):.6f}, median={np.median(gt_to_scan_dists):.6f}")
     
     # Chamfer distance is the average of both directions
     chamfer_dist = np.mean(scan_to_gt_dists) + np.mean(gt_to_scan_dists)
+    print(f"[Debug] Chamfer distance: {chamfer_dist:.6f}")
     
     return chamfer_dist, scan_to_gt_dists, gt_to_scan_dists
 
@@ -132,6 +151,8 @@ def compute_point_to_surface_distance(
     """
     Compute distance from each scan point to the nearest surface on GT mesh.
     """
+    print(f"[Debug] Computing point-to-surface distance: scan has {len(scan_pcd.points)} points, GT mesh has {len(gt_mesh.vertices)} vertices")
+    
     # Create KDTree from GT mesh vertices for fast lookup
     gt_pcd = o3d.geometry.PointCloud()
     gt_pcd.points = gt_mesh.vertices
@@ -140,17 +161,36 @@ def compute_point_to_surface_distance(
     scan_points = np.asarray(scan_pcd.points)
     gt_points = np.asarray(gt_pcd.points)
     
+    print(f"[Debug] GT point cloud for KDTree: {len(gt_points)} points")
+    
     # Use Open3D's KDTree for efficient nearest neighbor search
     kdtree = o3d.geometry.KDTreeFlann(gt_pcd)
     
     distances = []
-    for point in scan_points:
-        [_, idx, _] = kdtree.search_knn_vector_3d(point, 1)
-        nearest_gt_point = gt_points[idx[0]]
-        dist = np.linalg.norm(point - nearest_gt_point)
-        distances.append(dist)
+    failed_count = 0
+    for i, point in enumerate(scan_points):
+        result = kdtree.search_knn_vector_3d(point, 1)
+        # result is a tuple: (k, indices, distances)
+        if len(result) >= 2 and len(result[1]) > 0:
+            idx: int = int(result[1][0])
+            nearest_gt_point = gt_points[idx]
+            dist = float(np.linalg.norm(point - nearest_gt_point))
+            distances.append(dist)
+        else:
+            failed_count += 1
+            distances.append(float('inf'))
     
-    return np.array(distances)
+    if failed_count > 0:
+        print(f"[Warning] KDTree search failed for {failed_count} points")
+    
+    distances_array = np.array(distances)
+    valid_distances = distances_array[distances_array != float('inf')]
+    if len(valid_distances) > 0:
+        print(f"[Debug] Point-to-surface distances: min={np.min(valid_distances):.6f}, max={np.max(valid_distances):.6f}, mean={np.mean(valid_distances):.6f}, median={np.median(valid_distances):.6f}")
+    else:
+        print(f"[Warning] All point-to-surface distances are invalid!")
+    
+    return distances_array
 
 
 def compute_f_score(
@@ -171,21 +211,32 @@ def compute_f_score(
         recall: Percentage of GT points within threshold of scan
         f_score: Harmonic mean of precision and recall
     """
+    print(f"[Debug] Computing F-score with threshold: {threshold:.6f}")
+    
     # Compute distances
     scan_to_gt_dists = np.asarray(scan_pcd.compute_point_cloud_distance(gt_pcd))
     gt_to_scan_dists = np.asarray(gt_pcd.compute_point_cloud_distance(scan_pcd))
     
+    print(f"[Debug] Scan to GT distances for F-score: min={np.min(scan_to_gt_dists):.6f}, max={np.max(scan_to_gt_dists):.6f}, mean={np.mean(scan_to_gt_dists):.6f}")
+    print(f"[Debug] GT to scan distances for F-score: min={np.min(gt_to_scan_dists):.6f}, max={np.max(gt_to_scan_dists):.6f}, mean={np.mean(gt_to_scan_dists):.6f}")
+    
     # Precision: fraction of scan points within threshold
     precision = np.mean(scan_to_gt_dists < threshold)
+    num_within_threshold_scan = np.sum(scan_to_gt_dists < threshold)
+    print(f"[Debug] Precision: {num_within_threshold_scan}/{len(scan_to_gt_dists)} points within threshold = {precision:.6f}")
     
     # Recall: fraction of GT points within threshold
     recall = np.mean(gt_to_scan_dists < threshold)
+    num_within_threshold_gt = np.sum(gt_to_scan_dists < threshold)
+    print(f"[Debug] Recall: {num_within_threshold_gt}/{len(gt_to_scan_dists)} points within threshold = {recall:.6f}")
     
     # F-score: harmonic mean
     if precision + recall > 0:
         f_score = 2 * (precision * recall) / (precision + recall)
     else:
         f_score = 0.0
+    
+    print(f"[Debug] F-score: {f_score:.6f}")
     
     return precision, recall, f_score
 
@@ -203,15 +254,22 @@ def compute_volume_metrics(
         volume_overlap: Estimated overlap volume (simplified)
         volume_iou: Intersection over Union
     """
-    # Compute volumes (requires watertight meshes)
-    try:
-        volume_scan = scan_mesh.get_volume()
-    except Exception:
+    # Compute volumes (requires watertight meshes with triangles)
+    # Check if meshes have triangles before attempting volume computation
+    if len(scan_mesh.triangles) > 0:
+        try:
+            volume_scan = scan_mesh.get_volume()
+        except Exception:
+            volume_scan = 0.0
+    else:
         volume_scan = 0.0
     
-    try:
-        volume_gt = gt_mesh.get_volume()
-    except Exception:
+    if len(gt_mesh.triangles) > 0:
+        try:
+            volume_gt = gt_mesh.get_volume()
+        except Exception:
+            volume_gt = 0.0
+    else:
         volume_gt = 0.0
     
     # For overlap, we use a simplified approach:
@@ -229,7 +287,9 @@ def compute_volume_metrics(
     overlap_count = 0
     
     for point in scan_points:
-        [k, _, _] = kdtree.search_radius_vector_3d(point, overlap_threshold)
+        result = kdtree.search_radius_vector_3d(point, overlap_threshold)
+        # result is a tuple: (k, indices, distances)
+        k: int = int(result[0]) if len(result) > 0 else 0
         if k > 0:
             overlap_count += 1
     
@@ -242,6 +302,160 @@ def compute_volume_metrics(
     volume_iou = volume_overlap / volume_union if volume_union > 0 else 0.0
     
     return volume_scan, volume_gt, volume_overlap, volume_iou
+
+
+def compute_surface_area(mesh: o3d.geometry.TriangleMesh) -> float:
+    """Compute surface area (covered area/Fläche) of a mesh."""
+    if len(mesh.triangles) == 0:
+        return 0.0
+    try:
+        return float(mesh.get_surface_area())
+    except Exception:
+        # Fallback: compute manually
+        triangles = np.asarray(mesh.triangles)
+        vertices = np.asarray(mesh.vertices)
+        total_area = 0.0
+        for tri in triangles:
+            v0, v1, v2 = vertices[tri[0]], vertices[tri[1]], vertices[tri[2]]
+            # Compute triangle area using cross product
+            edge1 = v1 - v0
+            edge2 = v2 - v0
+            area = 0.5 * np.linalg.norm(np.cross(edge1, edge2))
+            total_area += area
+        return float(total_area)
+
+
+def count_holes(mesh: o3d.geometry.TriangleMesh) -> int:
+    """Count the number of holes (boundary loops) in a mesh."""
+    if len(mesh.triangles) == 0:
+        return 0
+    
+    try:
+        # Get boundary edges
+        edges = mesh.get_non_manifold_edges(allow_boundary_edges=True)
+        # Actually, we need boundary edges specifically
+        # Open3D doesn't have a direct method, so we'll compute manually
+        
+        triangles = np.asarray(mesh.triangles)
+        vertices = np.asarray(mesh.vertices)
+        
+        # Build edge to triangle mapping
+        edge_to_triangles = {}
+        for i, tri in enumerate(triangles):
+            edges_in_tri = [
+                tuple(sorted([tri[0], tri[1]])),
+                tuple(sorted([tri[1], tri[2]])),
+                tuple(sorted([tri[2], tri[0]]))
+            ]
+            for edge in edges_in_tri:
+                if edge not in edge_to_triangles:
+                    edge_to_triangles[edge] = []
+                edge_to_triangles[edge].append(i)
+        
+        # Find boundary edges (edges that belong to only one triangle)
+        boundary_edges = [edge for edge, tris in edge_to_triangles.items() if len(tris) == 1]
+        
+        if len(boundary_edges) == 0:
+            return 0  # No holes if mesh is watertight
+        
+        # Build adjacency for boundary edges
+        edge_to_vertices = {}
+        for edge in boundary_edges:
+            v0, v1 = edge[0], edge[1]
+            if v0 not in edge_to_vertices:
+                edge_to_vertices[v0] = []
+            if v1 not in edge_to_vertices:
+                edge_to_vertices[v1] = []
+            edge_to_vertices[v0].append(v1)
+            edge_to_vertices[v1].append(v0)
+        
+        # Count closed loops (holes)
+        visited_edges = set()
+        num_holes = 0
+        
+        for start_vertex in list(edge_to_vertices.keys()):
+            if start_vertex not in edge_to_vertices:
+                continue
+            
+            # Find an unvisited edge starting from this vertex
+            unvisited_neighbor = None
+            for neighbor in edge_to_vertices[start_vertex]:
+                edge_key = tuple(sorted([start_vertex, neighbor]))
+                if edge_key not in visited_edges:
+                    unvisited_neighbor = neighbor
+                    break
+            
+            if unvisited_neighbor is None:
+                continue
+            
+            # Traverse the loop
+            current = start_vertex
+            next_vertex = unvisited_neighbor
+            loop_length = 0
+            
+            while True:
+                edge_key = tuple(sorted([current, next_vertex]))
+                if edge_key in visited_edges:
+                    break
+                
+                visited_edges.add(edge_key)
+                loop_length += 1
+                
+                # Move to next vertex
+                current = next_vertex
+                
+                # Check if we've closed the loop
+                if current == start_vertex and loop_length > 2:
+                    num_holes += 1
+                    break
+                
+                # Find next unvisited neighbor
+                if current not in edge_to_vertices:
+                    break
+                
+                neighbors = [v for v in edge_to_vertices[current] 
+                            if tuple(sorted([current, v])) not in visited_edges]
+                
+                if not neighbors:
+                    break
+                
+                next_vertex = neighbors[0]
+                
+                # Prevent infinite loops
+                if loop_length > len(boundary_edges):
+                    break
+        
+        return num_holes
+        
+    except Exception as e:
+        print(f"[Warning] Error counting holes: {e}")
+        return 0
+
+
+def compute_surface_area_and_holes(
+    scan_mesh: o3d.geometry.TriangleMesh,
+    gt_mesh: o3d.geometry.TriangleMesh
+) -> Tuple[float, float, int, int]:
+    """
+    Compute surface area and hole count for both meshes.
+    
+    Returns:
+        surface_area_scan: Surface area of scan mesh
+        surface_area_gt: Surface area of ground truth mesh
+        num_holes_scan: Number of holes in scan mesh
+        num_holes_gt: Number of holes in ground truth mesh
+    """
+    print("[Info] Computing surface area and hole counts...")
+    
+    surface_area_scan = compute_surface_area(scan_mesh)
+    surface_area_gt = compute_surface_area(gt_mesh)
+    num_holes_scan = count_holes(scan_mesh)
+    num_holes_gt = count_holes(gt_mesh)
+    
+    print(f"[Info] Scan surface area: {surface_area_scan:.6f}, holes: {num_holes_scan}")
+    print(f"[Info] GT surface area: {surface_area_gt:.6f}, holes: {num_holes_gt}")
+    
+    return surface_area_scan, surface_area_gt, num_holes_scan, num_holes_gt
 
 
 def compute_scale_and_alignment_metrics(
@@ -262,25 +476,137 @@ def compute_scale_and_alignment_metrics(
     scan_extent = scan_bbox.get_extent()
     gt_extent = gt_bbox.get_extent()
     
+    print(f"[Debug] Scan extent: {scan_extent}")
+    print(f"[Debug] GT extent: {gt_extent}")
+    
     # Compute ratios (avoid division by zero)
     ratios = tuple(
-        s / g if g > 0 else 0.0
+        float(s / g if g > 0 else 0.0)
         for s, g in zip(scan_extent, gt_extent)
     )
+    print(f"[Debug] Bounding box ratios (scan/gt): {ratios}")
     
     # Compute center offset
     scan_center = scan_bbox.get_center()
     gt_center = gt_bbox.get_center()
-    center_offset = tuple((scan_center - gt_center).tolist())
+    offset_array = scan_center - gt_center
+    center_offset = (float(offset_array[0]), float(offset_array[1]), float(offset_array[2]))
+    print(f"[Debug] Center offset: {center_offset}")
     
     return ratios, center_offset
+
+
+def align_point_clouds(
+    source_pcd: o3d.geometry.PointCloud,
+    target_pcd: o3d.geometry.PointCloud,
+    method: str = "center"
+) -> Tuple[o3d.geometry.PointCloud, np.ndarray]:
+    """
+    Align source point cloud to target point cloud.
+    
+    Args:
+        source_pcd: Source point cloud to align
+        target_pcd: Target point cloud (reference)
+        method: Alignment method - "center" (translate to same center), 
+                "icp" (ICP registration), or "none" (no alignment)
+    
+    Returns:
+        Aligned source point cloud and transformation matrix (4x4)
+    """
+    if method == "none":
+        return source_pcd, np.eye(4)
+    
+    aligned_pcd = o3d.geometry.PointCloud(source_pcd)
+    transform = np.eye(4)
+    
+    if method == "center":
+        # Translate source to have same center as target
+        source_center = np.asarray(source_pcd.get_center())
+        target_center = np.asarray(target_pcd.get_center())
+        translation = target_center - source_center
+        transform[:3, 3] = translation
+        aligned_pcd.translate(translation)
+        print(f"[Info] Center alignment: translated by {translation}")
+    
+    elif method == "icp":
+        # First center-align, then run ICP
+        source_center = np.asarray(source_pcd.get_center())
+        target_center = np.asarray(target_pcd.get_center())
+        translation = target_center - source_center
+        aligned_pcd.translate(translation)
+        
+        # Run ICP
+        print(f"[Info] Running ICP registration...")
+        result = o3d.pipelines.registration.registration_icp(
+            aligned_pcd, target_pcd,
+            max_correspondence_distance=0.1,  # 10cm initial threshold
+            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+            criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=50)
+        )
+        transform_icp = result.transformation
+        aligned_pcd.transform(transform_icp)
+        
+        # Combine transformations
+        transform = transform_icp @ transform
+        print(f"[Info] ICP alignment: fitness={result.fitness:.4f}, inlier_rmse={result.inlier_rmse:.6f}")
+    
+    return aligned_pcd, transform
+
+
+def normalize_scale(
+    pcd: o3d.geometry.PointCloud,
+    target_scale: Optional[float] = None,
+    reference_pcd: Optional[o3d.geometry.PointCloud] = None
+) -> Tuple[o3d.geometry.PointCloud, float]:
+    """
+    Normalize scale of point cloud.
+    
+    Args:
+        pcd: Point cloud to scale
+        target_scale: Target scale (if None, uses reference_pcd scale)
+        reference_pcd: Reference point cloud to match scale to
+    
+    Returns:
+        Scaled point cloud and scale factor applied
+    """
+    if target_scale is None and reference_pcd is None:
+        return pcd, 1.0
+    
+    # Compute current scale (bounding box diagonal)
+    bbox = pcd.get_axis_aligned_bounding_box()
+    extent = bbox.get_extent()
+    current_scale = np.linalg.norm(extent)
+    
+    if target_scale is None:
+        # Use reference scale
+        ref_bbox = reference_pcd.get_axis_aligned_bounding_box()
+        ref_extent = ref_bbox.get_extent()
+        target_scale = np.linalg.norm(ref_extent)
+    
+    if current_scale == 0:
+        return pcd, 1.0
+    
+    scale_factor = target_scale / current_scale
+    
+    # Scale around center
+    center = bbox.get_center()
+    scaled_pcd = o3d.geometry.PointCloud(pcd)
+    scaled_pcd.translate(-center)
+    scaled_pcd.scale(scale_factor, center=(0, 0, 0))
+    scaled_pcd.translate(center)
+    
+    print(f"[Info] Scale normalization: factor={scale_factor:.6f} (from {current_scale:.6f} to {target_scale:.6f})")
+    
+    return scaled_pcd, scale_factor
 
 
 def compare_meshes(
     scan_path: Path,
     ground_truth_path: Path,
     threshold: Optional[float] = None,
-    num_sample_points: int = 50000
+    num_sample_points: int = 50000,
+    align_method: str = "none",
+    scale_normalize: bool = False
 ) -> ComparisonReport:
     """
     Compare a scan mesh against a ground truth mesh.
@@ -290,6 +616,9 @@ def compare_meshes(
         ground_truth_path: Path to the ground truth mesh (FBX or PLY)
         threshold: Distance threshold for F-score. If None, uses 1% of GT bounding box diagonal.
         num_sample_points: Number of points to sample from each mesh for comparison
+        align_method: Alignment method - "none" (no alignment), "center" (center alignment), 
+                      or "icp" (ICP registration)
+        scale_normalize: If True, scale scan to match GT scale
         
     Returns:
         ComparisonReport with all computed metrics
@@ -301,6 +630,17 @@ def compare_meshes(
     print(f"[Info] Loading scan mesh: {scan_path}")
     try:
         scan_mesh = load_mesh(scan_path)
+        print(f"[Debug] Scan mesh loaded: {len(scan_mesh.vertices)} vertices, {len(scan_mesh.triangles)} triangles")
+        scan_bbox = scan_mesh.get_axis_aligned_bounding_box()
+        scan_extent = scan_bbox.get_extent()
+        scan_center = scan_bbox.get_center()
+        print(f"[Debug] Scan bounding box extent: ({scan_extent[0]:.6f}, {scan_extent[1]:.6f}, {scan_extent[2]:.6f})")
+        print(f"[Debug] Scan bounding box center: ({scan_center[0]:.6f}, {scan_center[1]:.6f}, {scan_center[2]:.6f})")
+        if len(scan_mesh.vertices) > 0:
+            scan_vertices = np.asarray(scan_mesh.vertices)
+            print(f"[Debug] Scan vertex range X: [{np.min(scan_vertices[:, 0]):.6f}, {np.max(scan_vertices[:, 0]):.6f}]")
+            print(f"[Debug] Scan vertex range Y: [{np.min(scan_vertices[:, 1]):.6f}, {np.max(scan_vertices[:, 1]):.6f}]")
+            print(f"[Debug] Scan vertex range Z: [{np.min(scan_vertices[:, 2]):.6f}, {np.max(scan_vertices[:, 2]):.6f}]")
     except Exception as e:
         errors.append(f"Failed to load scan mesh: {e}")
         raise
@@ -308,6 +648,17 @@ def compare_meshes(
     print(f"[Info] Loading ground truth mesh: {ground_truth_path}")
     try:
         gt_mesh = load_mesh(ground_truth_path)
+        print(f"[Debug] GT mesh loaded: {len(gt_mesh.vertices)} vertices, {len(gt_mesh.triangles)} triangles")
+        gt_bbox = gt_mesh.get_axis_aligned_bounding_box()
+        gt_extent = gt_bbox.get_extent()
+        gt_center = gt_bbox.get_center()
+        print(f"[Debug] GT bounding box extent: ({gt_extent[0]:.6f}, {gt_extent[1]:.6f}, {gt_extent[2]:.6f})")
+        print(f"[Debug] GT bounding box center: ({gt_center[0]:.6f}, {gt_center[1]:.6f}, {gt_center[2]:.6f})")
+        if len(gt_mesh.vertices) > 0:
+            gt_vertices = np.asarray(gt_mesh.vertices)
+            print(f"[Debug] GT vertex range X: [{np.min(gt_vertices[:, 0]):.6f}, {np.max(gt_vertices[:, 0]):.6f}]")
+            print(f"[Debug] GT vertex range Y: [{np.min(gt_vertices[:, 1]):.6f}, {np.max(gt_vertices[:, 1]):.6f}]")
+            print(f"[Debug] GT vertex range Z: [{np.min(gt_vertices[:, 2]):.6f}, {np.max(gt_vertices[:, 2]):.6f}]")
     except Exception as e:
         errors.append(f"Failed to load ground truth mesh: {e}")
         raise
@@ -316,12 +667,72 @@ def compare_meshes(
     print(f"[Info] Sampling {num_sample_points} points from each mesh...")
     scan_pcd = mesh_to_point_cloud(scan_mesh, num_points=num_sample_points)
     gt_pcd = mesh_to_point_cloud(gt_mesh, num_points=num_sample_points)
+    print(f"[Debug] Scan point cloud: {len(scan_pcd.points)} points")
+    print(f"[Debug] GT point cloud: {len(gt_pcd.points)} points")
+    
+    # Apply scale normalization if requested
+    if scale_normalize:
+        print(f"[Info] Normalizing scale...")
+        scan_pcd, scale_factor = normalize_scale(scan_pcd, reference_pcd=gt_pcd)
+        # Note: We don't transform the original mesh to avoid corruption
+        # The point cloud is transformed for comparison, which is sufficient
+    
+    # Apply alignment if requested
+    if align_method != "none":
+        print(f"[Info] Aligning point clouds using method: {align_method}")
+        scan_pcd, transform = align_point_clouds(scan_pcd, gt_pcd, method=align_method)
+        # Note: We don't transform the original mesh to avoid corruption
+        # The point cloud is transformed for comparison, which is sufficient
+    
+    # Check point cloud bounds
+    if len(scan_pcd.points) > 0:
+        scan_pcd_points = np.asarray(scan_pcd.points)
+        print(f"[Debug] Scan PCD range X: [{np.min(scan_pcd_points[:, 0]):.6f}, {np.max(scan_pcd_points[:, 0]):.6f}]")
+        print(f"[Debug] Scan PCD range Y: [{np.min(scan_pcd_points[:, 1]):.6f}, {np.max(scan_pcd_points[:, 1]):.6f}]")
+        print(f"[Debug] Scan PCD range Z: [{np.min(scan_pcd_points[:, 2]):.6f}, {np.max(scan_pcd_points[:, 2]):.6f}]")
+    if len(gt_pcd.points) > 0:
+        gt_pcd_points = np.asarray(gt_pcd.points)
+        print(f"[Debug] GT PCD range X: [{np.min(gt_pcd_points[:, 0]):.6f}, {np.max(gt_pcd_points[:, 0]):.6f}]")
+        print(f"[Debug] GT PCD range Y: [{np.min(gt_pcd_points[:, 1]):.6f}, {np.max(gt_pcd_points[:, 1]):.6f}]")
+        print(f"[Debug] GT PCD range Z: [{np.min(gt_pcd_points[:, 2]):.6f}, {np.max(gt_pcd_points[:, 2]):.6f}]")
     
     # Determine threshold if not provided
     if threshold is None:
         gt_bbox = gt_mesh.get_axis_aligned_bounding_box()
-        gt_diagonal = np.linalg.norm(gt_bbox.get_extent())
+        gt_extent = gt_bbox.get_extent()
+        gt_diagonal = np.linalg.norm(gt_extent)
+        print(f"[Debug] GT bounding box extent: {gt_extent}")
+        print(f"[Debug] GT bounding box diagonal: {gt_diagonal:.6f}")
         threshold = gt_diagonal * 0.01  # 1% of bounding box diagonal
+        if threshold == 0.0:
+            # Fallback: use a small fixed threshold or compute from point cloud distances
+            print(f"[Warning] Computed threshold is 0.0, using fallback threshold")
+            if len(gt_pcd.points) > 0:
+                # Use 1% of the range of distances between GT points
+                gt_points = np.asarray(gt_pcd.points)
+                if len(gt_points) > 1:
+                    # Compute pairwise distances (sample a subset for efficiency)
+                    sample_size = min(1000, len(gt_points))
+                    sample_indices = np.random.choice(len(gt_points), size=sample_size, replace=False)
+                    sample_points = gt_points[sample_indices]
+                    # Compute distances to nearest neighbors
+                    kdtree = o3d.geometry.KDTreeFlann(gt_pcd)
+                    sample_dists = []
+                    for point in sample_points[:100]:  # Limit to 100 for speed
+                        result = kdtree.search_knn_vector_3d(point, 2)  # 2 because point itself is included
+                        if len(result) >= 2 and len(result[1]) > 1:
+                            idx = result[1][1]  # Second nearest (first is itself)
+                            dist = np.linalg.norm(point - gt_points[idx])
+                            sample_dists.append(dist)
+                    if len(sample_dists) > 0:
+                        threshold = np.percentile(sample_dists, 50) * 0.1  # 10% of median nearest neighbor distance
+                        print(f"[Debug] Using fallback threshold based on point spacing: {threshold:.6f}")
+                    else:
+                        threshold = 0.01  # Default 1cm
+                else:
+                    threshold = 0.01  # Default 1cm
+            else:
+                threshold = 0.01  # Default 1cm
         print(f"[Info] Using automatic threshold: {threshold:.6f} (1% of GT bounding box diagonal)")
     
     # Compute Chamfer Distance
@@ -348,6 +759,9 @@ def compare_meshes(
     print("[Info] Computing Scale and Alignment Metrics...")
     bbox_ratio, center_offset = compute_scale_and_alignment_metrics(scan_mesh, gt_mesh)
     
+    # Compute Surface Area and Hole Count
+    surface_area_scan, surface_area_gt, num_holes_scan, num_holes_gt = compute_surface_area_and_holes(scan_mesh, gt_mesh)
+    
     # Create metrics object
     metrics = ComparisonMetrics(
         chamfer_distance=float(chamfer_dist),
@@ -363,10 +777,14 @@ def compare_meshes(
         volume_gt=float(volume_gt),
         volume_overlap=float(volume_overlap),
         volume_iou=float(volume_iou),
-        bounding_box_ratio=bbox_ratio,
-        center_offset=center_offset,
+        bounding_box_ratio=tuple(float(x) for x in bbox_ratio),
+        center_offset=tuple(float(x) for x in center_offset),
         num_scan_points=len(scan_pcd.points),
         num_gt_points=len(gt_pcd.points),
+        surface_area_scan=float(surface_area_scan),
+        surface_area_gt=float(surface_area_gt),
+        num_holes_scan=int(num_holes_scan),
+        num_holes_gt=int(num_holes_gt),
     )
     
     # Create report
@@ -408,9 +826,15 @@ def create_error_heatmap(
         normalized = np.zeros_like(distances)
     
     # Apply colormap
-    import matplotlib.pyplot as plt
-    cmap = plt.get_cmap(colormap)
-    colors = cmap(normalized)[:, :3]  # RGB only, no alpha
+    try:
+        import matplotlib.pyplot as plt
+        cmap = plt.get_cmap(colormap)
+        colors = cmap(normalized)[:, :3]  # RGB only, no alpha
+    except ImportError:
+        # Fallback to simple colormap if matplotlib not available
+        colors = np.zeros((len(normalized), 3))
+        colors[:, 0] = normalized  # Red channel
+        colors[:, 1] = 1.0 - normalized  # Green channel
     
     # Create colored point cloud
     colored_pcd = o3d.geometry.PointCloud()
@@ -781,31 +1205,255 @@ def visualize_comparison(
     print("="*80)
 
 
+def compare_dual_scans(
+    no_fog_scan_path: Path,
+    fog_scan_path: Path,
+    ground_truth_path: Path,
+    threshold: Optional[float] = None,
+    num_sample_points: int = 50000,
+    align_method: str = "none",
+    scale_normalize: bool = False
+) -> DualComparisonReport:
+    """
+    Compare two scans (no_fog and fog) against ground truth.
+    
+    Args:
+        no_fog_scan_path: Path to the no_fog (bad) scan mesh
+        fog_scan_path: Path to the fog (good) scan mesh
+        ground_truth_path: Path to the ground truth mesh
+        threshold: Distance threshold for F-score
+        num_sample_points: Number of points to sample
+        align_method: Alignment method
+        scale_normalize: Whether to normalize scale
+        
+    Returns:
+        DualComparisonReport with both comparisons
+    """
+    print("="*80)
+    print("COMPARING NO_FOG SCAN (BAD) AGAINST GROUND TRUTH")
+    print("="*80)
+    no_fog_report = compare_meshes(
+        scan_path=no_fog_scan_path,
+        ground_truth_path=ground_truth_path,
+        threshold=threshold,
+        num_sample_points=num_sample_points,
+        align_method=align_method,
+        scale_normalize=scale_normalize
+    )
+    
+    print("\n" + "="*80)
+    print("COMPARING FOG SCAN (GOOD) AGAINST GROUND TRUTH")
+    print("="*80)
+    fog_report = compare_meshes(
+        scan_path=fog_scan_path,
+        ground_truth_path=ground_truth_path,
+        threshold=threshold,
+        num_sample_points=num_sample_points,
+        align_method=align_method,
+        scale_normalize=scale_normalize
+    )
+    
+    # Compute improvement metrics (negative = fog is better)
+    no_fog_metrics = no_fog_report.metrics
+    fog_metrics = fog_report.metrics
+    
+    improvement = {
+        'chamfer_distance': fog_metrics.chamfer_distance - no_fog_metrics.chamfer_distance,  # Negative = better
+        'hausdorff_distance': fog_metrics.hausdorff_distance - no_fog_metrics.hausdorff_distance,
+        'mean_point_to_surface': fog_metrics.mean_point_to_surface - no_fog_metrics.mean_point_to_surface,
+        'median_point_to_surface': fog_metrics.median_point_to_surface - no_fog_metrics.median_point_to_surface,
+        'max_point_to_surface': fog_metrics.max_point_to_surface - no_fog_metrics.max_point_to_surface,
+        'f_score': fog_metrics.f_score - no_fog_metrics.f_score,  # Positive = better
+        'precision': fog_metrics.precision - no_fog_metrics.precision,  # Positive = better
+        'recall': fog_metrics.recall - no_fog_metrics.recall,  # Positive = better
+        'surface_area_scan': fog_metrics.surface_area_scan - no_fog_metrics.surface_area_scan,  # Positive = better (more coverage)
+        'num_holes_scan': fog_metrics.num_holes_scan - no_fog_metrics.num_holes_scan,  # Negative = better (fewer holes)
+    }
+    
+    dual_report = DualComparisonReport(
+        ground_truth_path=ground_truth_path,
+        no_fog_scan_path=no_fog_scan_path,
+        fog_scan_path=fog_scan_path,
+        no_fog_report=no_fog_report,
+        fog_report=fog_report,
+        improvement=improvement
+    )
+    
+    return dual_report
+
+
+def print_dual_comparison_summary(dual_report: DualComparisonReport):
+    """Print a summary comparing both scans."""
+    print("\n" + "="*80)
+    print("DUAL COMPARISON SUMMARY: NO_FOG (BAD) vs FOG (GOOD)")
+    print("="*80)
+    
+    no_fog = dual_report.no_fog_report.metrics
+    fog = dual_report.fog_report.metrics
+    imp = dual_report.improvement
+    
+    # Primary metrics: Surface Area and Hole Count
+    print("\n" + "="*80)
+    print("PRIMARY METRICS: Surface Area (Coverage) and Hole Count")
+    print("="*80)
+    print(f"\n{'Metric':<35} {'No_Fog (Bad)':<25} {'Fog (Good)':<25} {'Improvement':<25} {'Winner':<10}")
+    print("-" * 120)
+    
+    # Surface Area (higher is better - more coverage)
+    surface_area_ratio_no_fog = no_fog.surface_area_scan / no_fog.surface_area_gt if no_fog.surface_area_gt > 0 else 0.0
+    surface_area_ratio_fog = fog.surface_area_scan / fog.surface_area_gt if fog.surface_area_gt > 0 else 0.0
+    winner = "Fog ✓" if imp['surface_area_scan'] > 0 else "No_Fog"
+    print(f"{'Surface Area (Coverage)':<35} {no_fog.surface_area_scan:<25.6f} {fog.surface_area_scan:<25.6f} {imp['surface_area_scan']:<25.6f} {winner:<10}")
+    print(f"{'  (vs GT, ratio)':<35} {surface_area_ratio_no_fog:<25.4f} {surface_area_ratio_fog:<25.4f} {'':<25} {'':<10}")
+    
+    # Hole Count (lower is better - fewer holes)
+    winner = "Fog ✓" if imp['num_holes_scan'] < 0 else "No_Fog"
+    print(f"{'Number of Holes':<35} {no_fog.num_holes_scan:<25} {fog.num_holes_scan:<25} {imp['num_holes_scan']:<25} {winner:<10}")
+    
+    print("\n" + "="*80)
+    print("SECONDARY METRICS: Geometric Accuracy")
+    print("="*80)
+    print(f"\n{'Metric':<35} {'No_Fog (Bad)':<25} {'Fog (Good)':<25} {'Improvement':<25} {'Winner':<10}")
+    print("-" * 120)
+    
+    # Chamfer Distance (lower is better)
+    winner = "Fog ✓" if imp['chamfer_distance'] < 0 else "No_Fog"
+    print(f"{'Chamfer Distance':<35} {no_fog.chamfer_distance:<25.6f} {fog.chamfer_distance:<25.6f} {imp['chamfer_distance']:<25.6f} {winner:<10}")
+    
+    # Hausdorff Distance (lower is better)
+    winner = "Fog ✓" if imp['hausdorff_distance'] < 0 else "No_Fog"
+    print(f"{'Hausdorff Distance':<35} {no_fog.hausdorff_distance:<25.6f} {fog.hausdorff_distance:<25.6f} {imp['hausdorff_distance']:<25.6f} {winner:<10}")
+    
+    # Mean Point-to-Surface (lower is better)
+    winner = "Fog ✓" if imp['mean_point_to_surface'] < 0 else "No_Fog"
+    print(f"{'Mean Point-to-Surface':<35} {no_fog.mean_point_to_surface:<25.6f} {fog.mean_point_to_surface:<25.6f} {imp['mean_point_to_surface']:<25.6f} {winner:<10}")
+    
+    # F-score (higher is better)
+    winner = "Fog ✓" if imp['f_score'] > 0 else "No_Fog"
+    print(f"{'F-score':<35} {no_fog.f_score:<25.6f} {fog.f_score:<25.6f} {imp['f_score']:<25.6f} {winner:<10}")
+    
+    # Precision (higher is better)
+    winner = "Fog ✓" if imp['precision'] > 0 else "No_Fog"
+    print(f"{'Precision':<35} {no_fog.precision:<25.6f} {fog.precision:<25.6f} {imp['precision']:<25.6f} {winner:<10}")
+    
+    # Recall (higher is better)
+    winner = "Fog ✓" if imp['recall'] > 0 else "No_Fog"
+    print(f"{'Recall':<35} {no_fog.recall:<25.6f} {fog.recall:<25.6f} {imp['recall']:<25.6f} {winner:<10}")
+    
+    print("="*80)
+    
+    # Count wins in primary metrics
+    primary_wins = sum([
+        imp['surface_area_scan'] > 0,  # More coverage is better
+        imp['num_holes_scan'] < 0,  # Fewer holes is better
+    ])
+    
+    # Count wins in secondary metrics
+    secondary_wins = sum([
+        imp['chamfer_distance'] < 0,
+        imp['hausdorff_distance'] < 0,
+        imp['mean_point_to_surface'] < 0,
+        imp['f_score'] > 0,
+        imp['precision'] > 0,
+        imp['recall'] > 0,
+    ])
+    
+    print(f"\nPRIMARY METRICS: Fog scan wins {primary_wins}/2 (Surface Area, Holes)")
+    print(f"SECONDARY METRICS: Fog scan wins {secondary_wins}/6 (Geometric Accuracy)")
+    
+    total_wins = primary_wins + secondary_wins
+    if primary_wins == 2:
+        print("✓✓ Fog scan is SIGNIFICANTLY BETTER (wins both primary metrics)")
+    elif primary_wins == 1 and secondary_wins >= 4:
+        print("✓ Fog scan is BETTER (wins 1 primary + majority of secondary)")
+    elif primary_wins == 1:
+        print("~ Fog scan is MIXED (wins 1 primary but loses most secondary)")
+    elif secondary_wins >= 4:
+        print("~ Fog scan is MIXED (loses primary but wins most secondary)")
+    elif total_wins >= 5:
+        print("~ Fog scan is SLIGHTLY BETTER (wins majority overall)")
+    elif total_wins <= 3:
+        print("✗ Fog scan is WORSE than no_fog scan")
+    else:
+        print("~ Fog scan is MIXED compared to no_fog scan")
+
+
+def save_dual_comparison_report(dual_report: DualComparisonReport, output_dir: Path):
+    """Save dual comparison report to JSON."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Convert to dict
+    report_dict = {
+        'ground_truth_path': str(dual_report.ground_truth_path),
+        'no_fog_scan_path': str(dual_report.no_fog_scan_path),
+        'fog_scan_path': str(dual_report.fog_scan_path),
+        'no_fog_metrics': asdict(dual_report.no_fog_report.metrics),
+        'fog_metrics': asdict(dual_report.fog_report.metrics),
+        'improvement': dual_report.improvement,
+        'no_fog_threshold': dual_report.no_fog_report.threshold,
+        'fog_threshold': dual_report.fog_report.threshold,
+    }
+    
+    # Convert tuples to lists for JSON
+    report_dict['no_fog_metrics']['bounding_box_ratio'] = list(report_dict['no_fog_metrics']['bounding_box_ratio'])
+    report_dict['no_fog_metrics']['center_offset'] = list(report_dict['no_fog_metrics']['center_offset'])
+    report_dict['fog_metrics']['bounding_box_ratio'] = list(report_dict['fog_metrics']['bounding_box_ratio'])
+    report_dict['fog_metrics']['center_offset'] = list(report_dict['fog_metrics']['center_offset'])
+    
+    metrics_path = output_dir / "dual_comparison_metrics.json"
+    with open(metrics_path, 'w') as f:
+        json.dump(report_dict, f, indent=2)
+    print(f"[Info] Saved dual comparison metrics to: {metrics_path}")
+
+
 def main():
     """Main entry point for the comparison script."""
     parser = argparse.ArgumentParser(
-        description="Compare a reconstructed mesh scan against a ground truth mesh.",
+        description="Compare reconstructed mesh scan(s) against a ground truth mesh.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic comparison
+  # Single scan comparison (no alignment, no scaling)
   python compare_mesh_to_ground_truth.py --scan scan.fbx --gt ground_truth.fbx
   
-  # With custom threshold and output directory
+  # Dual scan comparison (fog vs no_fog)
+  python compare_mesh_to_ground_truth.py --no-fog-scan bad.fbx --fog-scan good.fbx --gt gt.fbx
+  
+  # With center alignment and scale normalization
   python compare_mesh_to_ground_truth.py --scan scan.fbx --gt gt.fbx \\
-      --threshold 0.01 --output results/
+      --align center --normalize-scale
+  
+  # With ICP registration for full alignment
+  python compare_mesh_to_ground_truth.py --scan scan.fbx --gt gt.fbx \\
+      --align icp --normalize-scale
   
   # Non-interactive (no visualization windows)
   python compare_mesh_to_ground_truth.py --scan scan.fbx --gt gt.fbx --no-interactive
         """
     )
     
+    # Single scan mode
     parser.add_argument(
         "--scan", "-s",
         type=Path,
-        required=True,
-        help="Path to the scan mesh (FBX or PLY)"
+        default=None,
+        help="Path to the scan mesh (FBX or PLY) - for single scan mode"
     )
+    
+    # Dual scan mode
+    parser.add_argument(
+        "--no-fog-scan",
+        type=Path,
+        default=None,
+        help="Path to the no_fog (bad) scan mesh (FBX or PLY) - for dual scan mode"
+    )
+    parser.add_argument(
+        "--fog-scan",
+        type=Path,
+        default=None,
+        help="Path to the fog (good) scan mesh (FBX or PLY) - for dual scan mode"
+    )
+    
     parser.add_argument(
         "--gt", "-g",
         type=Path,
@@ -835,35 +1483,108 @@ Examples:
         action="store_true",
         help="Skip interactive visualizations (only save files)"
     )
+    parser.add_argument(
+        "--align",
+        choices=["none", "center", "icp"],
+        default="none",
+        help="Alignment method: 'none' (no alignment), 'center' (center alignment), or 'icp' (ICP registration). Default: none"
+    )
+    parser.add_argument(
+        "--normalize-scale",
+        action="store_true",
+        help="Scale scan mesh to match ground truth scale (based on bounding box diagonal)"
+    )
     
     args = parser.parse_args()
     
     # Validate inputs
-    if not args.scan.exists():
-        print(f"[Error] Scan file not found: {args.scan}")
-        sys.exit(1)
-    
     if not args.gt.exists():
         print(f"[Error] Ground truth file not found: {args.gt}")
         sys.exit(1)
     
-    # Run comparison
+    # Determine mode: dual scan or single scan
+    dual_mode = args.no_fog_scan is not None and args.fog_scan is not None
+    single_mode = args.scan is not None
+    
+    if not dual_mode and not single_mode:
+        print("[Error] Must provide either --scan (single mode) or both --no-fog-scan and --fog-scan (dual mode)")
+        sys.exit(1)
+    
+    if dual_mode and single_mode:
+        print("[Error] Cannot use both single scan mode (--scan) and dual scan mode (--no-fog-scan/--fog-scan)")
+        sys.exit(1)
+    
     try:
-        report = compare_meshes(
-            scan_path=args.scan,
-            ground_truth_path=args.gt,
-            threshold=args.threshold,
-            num_sample_points=args.num_points
-        )
+        if dual_mode:
+            # Dual scan mode
+            if not args.no_fog_scan.exists():
+                print(f"[Error] No_fog scan file not found: {args.no_fog_scan}")
+                sys.exit(1)
+            
+            if not args.fog_scan.exists():
+                print(f"[Error] Fog scan file not found: {args.fog_scan}")
+                sys.exit(1)
+            
+            # Run dual comparison
+            dual_report = compare_dual_scans(
+                no_fog_scan_path=args.no_fog_scan,
+                fog_scan_path=args.fog_scan,
+                ground_truth_path=args.gt,
+                threshold=args.threshold,
+                num_sample_points=args.num_points,
+                align_method=args.align,
+                scale_normalize=args.normalize_scale
+            )
+            
+            # Print summary
+            print_dual_comparison_summary(dual_report)
+            
+            # Save reports
+            if args.output is None:
+                output_dir = args.fog_scan.parent / "evaluation_results"
+            else:
+                output_dir = args.output
+            
+            # Save individual reports
+            visualize_comparison(
+                report=dual_report.no_fog_report,
+                output_dir=output_dir / "no_fog",
+                interactive=not args.no_interactive
+            )
+            visualize_comparison(
+                report=dual_report.fog_report,
+                output_dir=output_dir / "fog",
+                interactive=not args.no_interactive
+            )
+            
+            # Save dual comparison report
+            save_dual_comparison_report(dual_report, output_dir)
+            
+            print("\n[Info] Dual comparison complete!")
         
-        # Visualize results
-        visualize_comparison(
-            report=report,
-            output_dir=args.output,
-            interactive=not args.no_interactive
-        )
-        
-        print("\n[Info] Comparison complete!")
+        else:
+            # Single scan mode
+            if not args.scan.exists():
+                print(f"[Error] Scan file not found: {args.scan}")
+                sys.exit(1)
+            
+            report = compare_meshes(
+                scan_path=args.scan,
+                ground_truth_path=args.gt,
+                threshold=args.threshold,
+                num_sample_points=args.num_points,
+                align_method=args.align,
+                scale_normalize=args.normalize_scale
+            )
+            
+            # Visualize results
+            visualize_comparison(
+                report=report,
+                output_dir=args.output,
+                interactive=not args.no_interactive
+            )
+            
+            print("\n[Info] Comparison complete!")
         
     except Exception as e:
         print(f"[Error] Comparison failed: {e}")
@@ -874,4 +1595,5 @@ Examples:
 
 if __name__ == "__main__":
     main()
+
 

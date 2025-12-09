@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 import shutil
+import sys
 import numpy as np
 from tqdm import tqdm
 
@@ -113,7 +114,7 @@ def read_cameras_and_images(
         )
         cameras[camera_id] = camera
 
-        for i in tqdm(range(len(dataset)), desc=f"[{side.name}] Copying images", unit="img"):
+        for i in tqdm(range(len(dataset)), desc=f"[{side.name}] Copying images", unit="img", file=sys.stderr, dynamic_ncols=True, mininterval=0.1):
             try:
                 timestamp = dataset.timestamps[i]
                 dst_filename = f"{side.name}_{timestamp}.png"
@@ -173,7 +174,7 @@ def read_points_3d(data_io: DataIO) -> dict[int, Point3D]:
     point3D_id = 0
     points3D: dict[int, Point3D] = {}
 
-    for position, color in tqdm(zip(positions, colors), desc="[Info] Creating 3D points", unit="pt", total=len(positions)):
+    for position, color in tqdm(zip(positions, colors), desc="[Info] Creating 3D points", unit="pt", total=len(positions), file=sys.stderr, dynamic_ncols=True, mininterval=0.1):
         point3D = Point3D(
             id=point3D_id,
             xyz=position,

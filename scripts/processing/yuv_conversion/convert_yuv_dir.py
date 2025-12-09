@@ -1,4 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import sys
 import traceback
 from typing import Callable, Optional
 
@@ -70,7 +71,7 @@ def convert_yuv_directory(
                 executor.submit(process_file, side, yuv_timestamp, image_io, filter)
                 for yuv_timestamp in yuv_timestamps
             ]
-            for future in tqdm(as_completed(futures), total=len(futures), desc=f"Converting YUV to PNG ({side})"):
+            for future in tqdm(as_completed(futures), total=len(futures), desc=f"Converting YUV to PNG ({side})", file=sys.stderr, dynamic_ncols=True, mininterval=0.1):
                 try:
                     result = future.result()
                     if result:
@@ -79,7 +80,7 @@ def convert_yuv_directory(
                         excluded_count += 1
 
                 except Exception as e:
-                    print(f"[Exception] Worker failed: {e}")
+                    tqdm.write(f"[Exception] Worker failed: {e}")
                     exception_count += 1
                     continue            
 

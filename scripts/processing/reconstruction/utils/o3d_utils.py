@@ -1,4 +1,5 @@
 from typing import Generator, Optional, cast
+import sys
 import numpy as np
 import open3d as o3d
 from scipy.spatial.transform import Rotation as R
@@ -134,6 +135,7 @@ def load_depth_map(
         )
 
         if confidence_map is None:
+            # Note: This print is outside tqdm loop, so it's fine
             print(f"[Warning] Confidence map not found for timestamp {dataset.timestamps[index]}")
         else:
             depth_np[confidence_map.confidence_map < confidence_threshold] = 0.0
@@ -227,7 +229,7 @@ def integrate(
         )
 
     if show_progress:
-        for index in tqdm(range(N), desc=desc):
+        for index in tqdm(range(N), desc=desc, file=sys.stderr, dynamic_ncols=True, mininterval=0.1):
             integrate(index)
     else:
         for index in range(N):
