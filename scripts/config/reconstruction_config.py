@@ -117,13 +117,14 @@ class ColorOptimizationConfig:
     interval: int = 10
     max_iteration: int = 100
     use_dataset_cache: bool = True
+    min_triangle_count: int = 2000  # Minimum triangle count to keep a mesh component (filters out floating fragments)
 
 
 @dataclass
 class ColorAlignedDepthRenderingConfig:
     weight_threshold: float = 3.0
     estimated_vertex_number: int = -1
-
+    min_triangle_count: int = 2000  # Minimum triangle count to keep a mesh component (filters out floating fragments)
     only_use_optimized_dataset: bool = True
 
 

@@ -11,7 +11,7 @@ from processing.reconstruction.color_map_optimization.optimize_color_pose import
 from processing.reconstruction.confidence_estimation.estimate_depth_confidences import estimate_depth_confidences
 from processing.reconstruction.depth_optimization.depth_pose_optimizer import DepthPoseOptimizer
 from processing.reconstruction.utils.log_utils import log_step
-from processing.reconstruction.utils.o3d_utils import integrate, raycast_in_color_view
+from processing.reconstruction.utils.o3d_utils import integrate, raycast_in_color_view, filter_mesh_components
 
 
 def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
@@ -94,6 +94,19 @@ def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
     # Color map optimization
     optimized_color_dataset_map = None
     if config.optimize_color_pose:
+        log_step("Extract and save colorless mesh")
+        # Extract colorless mesh (same parameters as used in color optimization)
+        colorless_mesh = vbg.extract_triangle_mesh(
+            weight_threshold=config.color_optimization.weight_threshold,
+            estimated_vertex_number=config.color_optimization.estimated_vertex_number
+        )
+        
+        # Filter out small disconnected mesh components
+        colorless_mesh = filter_mesh_components(
+            colorless_mesh, 
+            min_triangle_count=config.color_optimization.min_triangle_count
+        )
+        
         log_step("Optimize color maps")
         colored_mesh, optimized_color_dataset_map = optimize_color_pose(vbg=vbg, data_io=data_io, config=config.color_optimization)
 
@@ -126,6 +139,9 @@ def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
             weight_threshold=config.color_aligned_depth_rendering.weight_threshold,
             estimated_vertex_number=config.color_aligned_depth_rendering.estimated_vertex_number
         )
+
+        # Filter out small disconnected mesh components (e.g., floating body parts)
+        mesh = filter_mesh_components(mesh, min_triangle_count=config.color_aligned_depth_rendering.min_triangle_count)
 
         scene = o3d.t.geometry.RaycastingScene(device=config.device)
         scene.add_triangles(mesh.cpu())

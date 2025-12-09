@@ -236,6 +236,89 @@ def integrate(
     return vbg
 
 
+def filter_mesh_components(
+    mesh: o3d.t.geometry.TriangleMesh,
+    min_triangle_count: int = 2000
+) -> o3d.t.geometry.TriangleMesh:
+    """
+    Filter out disconnected mesh components that have fewer triangles than the threshold.
+    This helps remove floating fragments (e.g., from body parts in head-level recordings)
+    while preserving the main connected mesh structure.
+    
+    Args:
+        mesh: Input triangle mesh
+        min_triangle_count: Minimum number of triangles required to keep a component
+        
+    Returns:
+        Filtered mesh with only components above the threshold
+    """
+    # Convert to legacy format for connected component analysis
+    mesh_legacy = mesh.to_legacy()
+    
+    # Handle empty mesh
+    if len(mesh_legacy.triangles) == 0:
+        print("[Warning] Mesh filtering: Input mesh has no triangles, returning as-is")
+        return mesh
+    
+    # Find connected components
+    triangle_clusters, cluster_n_triangles, cluster_area = mesh_legacy.cluster_connected_triangles()
+    triangle_clusters = np.asarray(triangle_clusters)
+    cluster_n_triangles = np.asarray(cluster_n_triangles)
+    
+    original_triangle_count = len(triangle_clusters)
+    original_component_count = len(cluster_n_triangles)
+    
+    if original_component_count == 0:
+        print("[Warning] Mesh filtering: No connected components found, returning as-is")
+        return mesh
+    
+    # Create mask to keep only components with triangle count >= min_triangle_count
+    valid_clusters = np.where(cluster_n_triangles >= min_triangle_count)[0]
+    
+    if len(valid_clusters) == 0:
+        print(f"[Warning] Mesh filtering: No components have >= {min_triangle_count} triangles. Largest component has {np.max(cluster_n_triangles)} triangles.")
+        print("[Warning] Mesh filtering: Returning largest component only.")
+        # Keep only the largest component
+        largest_cluster_idx = np.argmax(cluster_n_triangles)
+        valid_clusters = np.array([largest_cluster_idx])
+    
+    mask = np.isin(triangle_clusters, valid_clusters)
+    
+    triangles_to_keep = np.sum(mask)
+    triangles_to_remove = original_triangle_count - triangles_to_keep
+    
+    # Remove triangles from small components
+    if triangles_to_remove > 0:
+        mesh_legacy.remove_triangles_by_mask(~mask)
+        mesh_legacy.remove_unreferenced_vertices()
+    
+    # Clean up degenerate triangles
+    mesh_legacy.remove_degenerate_triangles()
+    mesh_legacy.remove_duplicated_triangles()
+    mesh_legacy.remove_duplicated_vertices()
+    mesh_legacy.remove_non_manifold_edges()
+    
+    # Convert back to tensor format
+    filtered_mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh_legacy)
+    
+    # Preserve device
+    filtered_mesh = filtered_mesh.to(mesh.device)
+    
+    num_removed_components = original_component_count - len(valid_clusters)
+    if num_removed_components > 0:
+        print(f"[Info] Mesh filtering: Found {original_component_count} connected component(s)")
+        print(f"[Info] Mesh filtering: Removed {num_removed_components} small component(s) with < {min_triangle_count} triangles")
+        print(f"[Info] Mesh filtering: Removed {triangles_to_remove} triangles from small components")
+        print(f"[Info] Mesh filtering: Kept {len(valid_clusters)} component(s) with >= {min_triangle_count} triangles")
+        # Get triangle count from tensor mesh (convert to legacy temporarily for count)
+        final_triangle_count = len(filtered_mesh.to_legacy().triangles)
+        print(f"[Info] Mesh filtering: Final mesh has {final_triangle_count} triangles (was {original_triangle_count})")
+    else:
+        print(f"[Info] Mesh filtering: All {original_component_count} component(s) have >= {min_triangle_count} triangles, no filtering needed")
+    
+    return filtered_mesh
+
+
 def raycast_in_color_view(
     scene: o3d.t.geometry.RaycastingScene,
     dataset: CameraDataset

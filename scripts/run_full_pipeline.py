@@ -8,8 +8,13 @@ Full pipeline runner that orchestrates the complete 3D reconstruction workflow:
 """
 
 # latest_folder=$(adb shell "ls -1t /sdcard/Android/data/com.CHL.RealityLog/files/" | head -n 1)
+# latest_folder=$(adb shell "ls -1t /sdcard/Android/data/com.CHL.Fog_RealityLog/files/" | head -n 1)
+
 # adb shell "ls /sdcard/Android/data/com.CHL.RealityLog/files/$latest_folder/left_depth"
+# adb shell "ls /sdcard/Android/data/com.CHL.Fog_RealityLog/files/$latest_folder/left_depth"
+
 # adb pull "/sdcard/Android/data/com.CHL.RealityLog/files/$latest_folder" ~/Documents/QuestRealityCapture
+# adb pull "/sdcard/Android/data/com.CHL.Fog_RealityLog/files/$(adb shell 'ls -1t /sdcard/Android/data/com.CHL.Fog_RealityLog/files/ | head -n 1')" ~/Documents/QuestRealityCapture
 
 
 import argparse
@@ -161,8 +166,21 @@ def main():
         project_dir = find_latest_session(args.project_dir.resolve())
         print(f"[Info] No --session_dir specified. Found latest session: {project_dir}")
     else:
-        # Try to use a default location or require explicit input
-        parser.error("Either --project_dir or --session_dir must be specified")
+        # Default: look in QuestRealityCapture directory
+        default_base_dir = Path("/Users/linus/Documents/QuestRealityCapture")
+        if not default_base_dir.exists():
+            parser.error(
+                f"Either --project_dir or --session_dir must be specified, "
+                f"or default directory must exist: {default_base_dir}"
+            )
+        try:
+            project_dir = find_latest_session(default_base_dir)
+            print(f"[Info] No directory specified. Using latest session from {default_base_dir}: {project_dir}")
+        except RuntimeError as e:
+            parser.error(
+                f"Could not find latest session in {default_base_dir}. "
+                f"Please specify --project_dir or --session_dir explicitly. Error: {e}"
+            )
     
     # Ensure project_dir is absolute and resolved
     project_dir = project_dir.resolve()

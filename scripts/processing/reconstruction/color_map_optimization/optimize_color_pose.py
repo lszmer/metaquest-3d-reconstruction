@@ -5,7 +5,7 @@ from dataio.data_io import DataIO
 from models.camera_dataset import CameraDataset
 from models.side import Side
 from models.transforms import CoordinateSystem, Transforms
-from processing.reconstruction.utils.o3d_utils import convert_dataset_to_trajectory, convert_trajectory_to_transforms, raycast_in_color_view
+from processing.reconstruction.utils.o3d_utils import convert_dataset_to_trajectory, convert_trajectory_to_transforms, raycast_in_color_view, filter_mesh_components
 
 
 def optimize_color_pose(
@@ -17,6 +17,9 @@ def optimize_color_pose(
         weight_threshold=config.weight_threshold,
         estimated_vertex_number=config.estimated_vertex_number
     )
+
+    # Filter out small disconnected mesh components (e.g., floating body parts)
+    mesh = filter_mesh_components(mesh, min_triangle_count=config.min_triangle_count)
 
     scene = o3d.t.geometry.RaycastingScene(device=config.device)
     scene.add_triangles(mesh.cpu())
@@ -63,11 +66,22 @@ def optimize_color_pose(
     trajectory.parameters = trajectory_params
 
     with o3d.utility.VerbosityContextManager(
-        o3d.utility.VerbosityLevel.Debug) as _:
+        o3d.utility.VerbosityLevel.Warning) as _:
         colored_mesh, trajectory = o3d.pipelines.color_map.run_rigid_optimizer(
             mesh.cpu().to_legacy(), rgbd_images, trajectory,
             o3d.pipelines.color_map.RigidOptimizerOption(maximum_iteration=config.max_iteration)
         )
+
+    # Filter the colored mesh again after color optimization, as the optimization process
+    # may modify the mesh structure and could reintroduce small disconnected components
+    print("[Info] Filtering colored mesh after color optimization...")
+    colored_mesh_tensor = o3d.t.geometry.TriangleMesh.from_legacy(colored_mesh)
+    colored_mesh_tensor = colored_mesh_tensor.to(mesh.device)
+    colored_mesh_filtered = filter_mesh_components(
+        colored_mesh_tensor, 
+        min_triangle_count=config.min_triangle_count
+    )
+    colored_mesh = colored_mesh_filtered.to_legacy()
 
     trajectory_transforms = convert_trajectory_to_transforms(trajectory=trajectory)
 
