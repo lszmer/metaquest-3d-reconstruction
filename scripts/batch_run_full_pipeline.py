@@ -14,8 +14,7 @@ Example:
     python scripts/batch_run_full_pipeline.py \
         --base-dir /Volumes/Intenso/Fog \
         --base-dir /Volumes/Intenso/NoFog \
-        --config config/pipeline_config.yml \
-        --skip-fbx
+        --config config/pipeline_config.yml
 """
 
 import argparse
@@ -51,6 +50,7 @@ def run_single_project(
     session_dir: Path,
     config: Path | None,
     skip_fbx: bool,
+    no_cache: bool,
 ) -> int:
     """
     Run `run_full_pipeline.py` once for a given session/project directory.
@@ -64,6 +64,12 @@ def run_single_project(
 
     if skip_fbx:
         cmd.append("--skip-fbx")
+
+    # For batch processing we normally want completely fresh runs that do not
+    # reuse any cached datasets or previously generated outputs. This is
+    # controlled via the --no-cache flag on run_full_pipeline.py.
+    if no_cache:
+        cmd.append("--no-cache")
 
     print("\n" + "=" * 80)
     print(f"[Batch] Running pipeline for: {session_dir}")
@@ -124,6 +130,14 @@ def main() -> None:
         help="Forward --skip-fbx to run_full_pipeline.py for each project.",
     )
     parser.add_argument(
+        "--reuse-cache",
+        action="store_true",
+        help=(
+            "Allow run_full_pipeline.py to reuse cached data or existing outputs. "
+            "By default, the batch runner forces fresh recomputation for every session."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Only list the discovered project/session dirs, do not run anything.",
@@ -172,6 +186,7 @@ def main() -> None:
     if config_path is not None:
         print(f"[Batch] Forwarding config: {config_path}")
     print(f"[Batch] skip_fbx = {args.skip_fbx}")
+    print(f"[Batch] reuse_cache = {args.reuse_cache}")
 
     # Run all projects sequentially and collect results
     failures: list[tuple[Path, int]] = []
@@ -187,6 +202,7 @@ def main() -> None:
             session_dir=proj,
             config=config_path,
             skip_fbx=args.skip_fbx,
+            no_cache=not args.reuse_cache,
         )
         if rc != 0:
             failures.append((proj, rc))

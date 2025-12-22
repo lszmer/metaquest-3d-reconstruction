@@ -22,7 +22,7 @@ import json
 import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any, cast
 
 import numpy as np
 import open3d as o3d
@@ -123,7 +123,7 @@ def compute_chamfer_distance(
     print(f"[Debug] GT to scan distances: min={np.min(gt_to_scan_dists):.6f}, max={np.max(gt_to_scan_dists):.6f}, mean={np.mean(gt_to_scan_dists):.6f}, median={np.median(gt_to_scan_dists):.6f}")
     
     # Chamfer distance is the average of both directions
-    chamfer_dist = np.mean(scan_to_gt_dists) + np.mean(gt_to_scan_dists)
+    chamfer_dist = float(np.mean(scan_to_gt_dists) + np.mean(gt_to_scan_dists))
     print(f"[Debug] Chamfer distance: {chamfer_dist:.6f}")
     
     return chamfer_dist, scan_to_gt_dists, gt_to_scan_dists
@@ -221,18 +221,18 @@ def compute_f_score(
     print(f"[Debug] GT to scan distances for F-score: min={np.min(gt_to_scan_dists):.6f}, max={np.max(gt_to_scan_dists):.6f}, mean={np.mean(gt_to_scan_dists):.6f}")
     
     # Precision: fraction of scan points within threshold
-    precision = np.mean(scan_to_gt_dists < threshold)
+    precision = float(np.mean(scan_to_gt_dists < threshold))
     num_within_threshold_scan = np.sum(scan_to_gt_dists < threshold)
     print(f"[Debug] Precision: {num_within_threshold_scan}/{len(scan_to_gt_dists)} points within threshold = {precision:.6f}")
     
     # Recall: fraction of GT points within threshold
-    recall = np.mean(gt_to_scan_dists < threshold)
+    recall = float(np.mean(gt_to_scan_dists < threshold))
     num_within_threshold_gt = np.sum(gt_to_scan_dists < threshold)
     print(f"[Debug] Recall: {num_within_threshold_gt}/{len(gt_to_scan_dists)} points within threshold = {recall:.6f}")
     
     # F-score: harmonic mean
     if precision + recall > 0:
-        f_score = 2 * (precision * recall) / (precision + recall)
+        f_score = float(2 * (precision * recall) / (precision + recall))
     else:
         f_score = 0.0
     
@@ -511,10 +511,11 @@ def compute_scale_and_alignment_metrics(
     print(f"[Debug] Scan extent: {scan_extent}")
     print(f"[Debug] GT extent: {gt_extent}")
     
-    # Compute ratios (avoid division by zero)
-    ratios = tuple(
-        float(s / g if g > 0 else 0.0)
-        for s, g in zip(scan_extent, gt_extent)
+    # Compute ratios (avoid division by zero), explicitly as 3-tuple for type checking
+    ratios = (
+        float(scan_extent[0] / gt_extent[0]) if gt_extent[0] > 0 else 0.0,
+        float(scan_extent[1] / gt_extent[1]) if gt_extent[1] > 0 else 0.0,
+        float(scan_extent[2] / gt_extent[2]) if gt_extent[2] > 0 else 0.0,
     )
     print(f"[Debug] Bounding box ratios (scan/gt): {ratios}")
     
@@ -611,14 +612,15 @@ def normalize_scale(
     
     if target_scale is None:
         # Use reference scale
+        assert reference_pcd is not None
         ref_bbox = reference_pcd.get_axis_aligned_bounding_box()
         ref_extent = ref_bbox.get_extent()
-        target_scale = np.linalg.norm(ref_extent)
+        target_scale = float(np.linalg.norm(ref_extent))
     
     if current_scale == 0:
         return pcd, 1.0
     
-    scale_factor = target_scale / current_scale
+    scale_factor = float(target_scale / current_scale)
     
     # Scale around center
     center = bbox.get_center()
@@ -728,15 +730,16 @@ def compare_meshes(
         print(f"[Debug] GT PCD range Y: [{np.min(gt_pcd_points[:, 1]):.6f}, {np.max(gt_pcd_points[:, 1]):.6f}]")
         print(f"[Debug] GT PCD range Z: [{np.min(gt_pcd_points[:, 2]):.6f}, {np.max(gt_pcd_points[:, 2]):.6f}]")
     
-    # Determine threshold if not provided
+    # Determine threshold value to use (always a concrete float)
     if threshold is None:
+        threshold_value: float
         gt_bbox = gt_mesh.get_axis_aligned_bounding_box()
         gt_extent = gt_bbox.get_extent()
         gt_diagonal = np.linalg.norm(gt_extent)
         print(f"[Debug] GT bounding box extent: {gt_extent}")
         print(f"[Debug] GT bounding box diagonal: {gt_diagonal:.6f}")
-        threshold = gt_diagonal * 0.01  # 1% of bounding box diagonal
-        if threshold == 0.0:
+        threshold_value = float(gt_diagonal * 0.01)  # 1% of bounding box diagonal
+        if threshold_value == 0.0:
             # Fallback: use a small fixed threshold or compute from point cloud distances
             print(f"[Warning] Computed threshold is 0.0, using fallback threshold")
             if len(gt_pcd.points) > 0:
@@ -757,15 +760,17 @@ def compare_meshes(
                             dist = np.linalg.norm(point - gt_points[idx])
                             sample_dists.append(dist)
                     if len(sample_dists) > 0:
-                        threshold = np.percentile(sample_dists, 50) * 0.1  # 10% of median nearest neighbor distance
-                        print(f"[Debug] Using fallback threshold based on point spacing: {threshold:.6f}")
+                        threshold_value = float(np.percentile(sample_dists, 50) * 0.1)  # 10% of median nearest neighbor distance
+                        print(f"[Debug] Using fallback threshold based on point spacing: {threshold_value:.6f}")
                     else:
-                        threshold = 0.01  # Default 1cm
+                        threshold_value = 0.01  # Default 1cm
                 else:
-                    threshold = 0.01  # Default 1cm
+                    threshold_value = 0.01  # Default 1cm
             else:
-                threshold = 0.01  # Default 1cm
-        print(f"[Info] Using automatic threshold: {threshold:.6f} (1% of GT bounding box diagonal)")
+                threshold_value = 0.01  # Default 1cm
+        print(f"[Info] Using automatic threshold: {threshold_value:.6f} (1% of GT bounding box diagonal)")
+    else:
+        threshold_value = float(threshold)
     
     # Compute Chamfer Distance
     print("[Info] Computing Chamfer Distance...")
@@ -781,7 +786,7 @@ def compare_meshes(
     
     # Compute F-score
     print("[Info] Computing F-score...")
-    precision, recall, f_score = compute_f_score(scan_pcd, gt_pcd, threshold)
+    precision, recall, f_score = compute_f_score(scan_pcd, gt_pcd, threshold_value)
     
     # Compute Volume Metrics
     print("[Info] Computing Volume Metrics...")
@@ -809,8 +814,8 @@ def compare_meshes(
         volume_gt=float(volume_gt),
         volume_overlap=float(volume_overlap),
         volume_iou=float(volume_iou),
-        bounding_box_ratio=tuple(float(x) for x in bbox_ratio),
-        center_offset=tuple(float(x) for x in center_offset),
+        bounding_box_ratio=bbox_ratio,
+        center_offset=center_offset,
         num_scan_points=len(scan_pcd.points),
         num_gt_points=len(gt_pcd.points),
         surface_area_scan=float(surface_area_scan),
@@ -824,7 +829,7 @@ def compare_meshes(
         scan_path=scan_path,
         ground_truth_path=ground_truth_path,
         metrics=metrics,
-        threshold=threshold,
+        threshold=threshold_value,
         warnings=warnings,
         errors=errors,
     )
@@ -1151,9 +1156,13 @@ def visualize_comparison(
     if interactive:
         print("[Info] Opening interactive visualizations...")
         print("[Info] Press 'Q' or close window to continue")
+
+        # Access Open3D visualization module with a dynamic attribute lookup to
+        # satisfy static type checkers (the attribute exists at runtime).
+        visualization = cast(Any, o3d).visualization
         
         # Visualization 1: Error heatmap
-        vis1 = o3d.visualization.Visualizer()
+        vis1 = visualization.Visualizer()
         vis1.create_window(window_name="Error Heatmap - Scan vs Ground Truth", width=1200, height=800)
         vis1.add_geometry(colored_pcd)
         vis1.add_geometry(gt_pcd)
@@ -1161,7 +1170,7 @@ def visualize_comparison(
         vis1.destroy_window()
         
         # Visualization 2: Side-by-side
-        vis2 = o3d.visualization.Visualizer()
+        vis2 = visualization.Visualizer()
         vis2.create_window(window_name="Side-by-Side Comparison", width=1200, height=800)
         
         # Translate scan to the right
@@ -1175,7 +1184,7 @@ def visualize_comparison(
         vis2.destroy_window()
         
         # Visualization 3: Overlay (semi-transparent)
-        vis3 = o3d.visualization.Visualizer()
+        vis3 = visualization.Visualizer()
         vis3.create_window(window_name="Overlay Comparison", width=1200, height=800)
         
         # Make GT semi-transparent (gray)

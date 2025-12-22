@@ -8,12 +8,14 @@ Full pipeline runner that orchestrates the complete 3D reconstruction workflow:
 """
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 import subprocess
 import re
 import time
 import sys
+import os
 
 from pipeline.pipeline_processor import PipelineProcessor
 
@@ -37,7 +39,8 @@ def run_pipeline(project_dir: Path, config_path: Path) -> float:
     view_seconds = 0.0
     script_dir = Path(__file__).resolve().parent
     
-    # Initialize pipeline processor
+    # NOTE: The actual value for force_recompute is wired in main() where we
+    # construct the PipelineProcessor. This helper keeps the signature simple.
     processor = PipelineProcessor(project_dir=project_dir, config_yml_path=config_path)
     
     # Step 1: Convert YUV to RGB
@@ -68,13 +71,24 @@ def run_pipeline(project_dir: Path, config_path: Path) -> float:
         # Run reconstruction in subprocess to capture visualization time
         cmd = [
             sys.executable,
+            "-u",  # run reconstruct_scene.py with unbuffered stdout/stderr so logs stream immediately
             str(script_dir / "reconstruct_scene.py"),
             "--project_dir", str(project_dir),
-            "--config", str(config_path)
+            "--config", str(config_path),
         ]
         print(f"Running: {' '.join(cmd)}")
-        
-        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as proc:
+
+        env = os.environ.copy()
+        env.setdefault("PYTHONUNBUFFERED", "1")
+
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            bufsize=1,
+        ) as proc:
             assert proc.stdout is not None
             for line in proc.stdout:
                 print(line, end="")
@@ -145,6 +159,14 @@ def main():
         action="store_true",
         help="Skip FBX conversion step"
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help=(
+            "Do not reuse any cached datasets or previously generated outputs. "
+            "Always recompute all steps for this run (recommended for batch processing)."
+        ),
+    )
     
     args = parser.parse_args()
     
@@ -190,7 +212,81 @@ def main():
     # Run pipeline
     start_ts = time.time()
     try:
-        view_seconds = run_pipeline(project_dir, config_path)
+        # Initialize pipeline processor with or without cache reuse according to CLI
+        processor = PipelineProcessor(
+            project_dir=project_dir,
+            config_yml_path=config_path,
+            force_recompute=args.no_cache,
+        )
+
+        # The original run_pipeline() helper encapsulated the steps; we inline
+        # its logic here so that we can pass the configured processor instance.
+        view_seconds = 0.0
+        script_dir = Path(__file__).resolve().parent
+
+        # Step 1: Convert YUV to RGB
+        print("\n" + "=" * 80)
+        print("STEP 1: Converting YUV to RGB")
+        print("=" * 80)
+        try:
+            processor.convert_yuv_to_rgb()
+        except Exception as e:
+            print(f"[Error] Failed to convert YUV to RGB: {e}")
+            raise
+
+        # Step 2: Convert depth to linear
+        print("\n" + "=" * 80)
+        print("STEP 2: Converting depth to linear")
+        print("=" * 80)
+        try:
+            processor.convert_depth_to_linear()
+        except Exception as e:
+            print(f"[Error] Failed to convert depth to linear: {e}")
+            raise
+
+        # Step 3: Reconstruct scene (still delegated to the dedicated script so
+        # we keep the existing visualization-time accounting and logging).
+        print("\n" + "=" * 80)
+        print("STEP 3: Reconstructing scene")
+        print("=" * 80)
+        try:
+            cmd = [
+                sys.executable,
+                "-u",
+                str(script_dir / "reconstruct_scene.py"),
+                "--project_dir",
+                str(project_dir),
+                "--config",
+                str(config_path),
+            ]
+            print(f"Running: {' '.join(cmd)}")
+
+            env = os.environ.copy()
+            env.setdefault("PYTHONUNBUFFERED", "1")
+
+            with subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                bufsize=1,
+            ) as proc:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    print(line, end="")
+                    if "[VIS] COLORLESS_VIEW_SECONDS:" in line or "[VIS] COLORED_VIEW_SECONDS:" in line:
+                        try:
+                            val = float(line.strip().split(":")[-1])
+                            view_seconds += val
+                        except Exception:
+                            pass
+                ret = proc.wait()
+                if ret != 0:
+                    raise subprocess.CalledProcessError(ret, cmd)
+        except Exception as e:
+            print(f"[Error] Failed to reconstruct scene: {e}")
+            raise
     except Exception as e:
         print(f"\n[Error] Pipeline failed: {e}")
         sys.exit(1)
@@ -203,6 +299,9 @@ def main():
             print(f"[Warning] FBX conversion failed: {e}")
     
     end_ts = time.time()
+    end_dt_utc = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+    end_dt_local = end_dt_utc.astimezone()
+    start_dt_utc = datetime.fromtimestamp(start_ts, tz=timezone.utc)
     
     # Timing summary
     left_dir = project_dir / "left_camera_rgb"
@@ -217,6 +316,9 @@ def main():
     
     summary_lines = [
         f"Project directory: {project_dir}",
+        f"Start timestamp (UTC): {start_dt_utc.isoformat()}",
+        f"Completion timestamp (UTC): {end_dt_utc.isoformat()}",
+        f"Completion timestamp (local): {end_dt_local.isoformat()}",
         f"Total runtime (s): {total_seconds:.3f}",
         f"Visualization time excluded (s): {view_seconds:.3f}",
         f"Adjusted runtime (s): {adjusted_seconds:.3f}",

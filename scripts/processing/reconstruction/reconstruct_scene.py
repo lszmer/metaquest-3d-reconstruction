@@ -1,5 +1,6 @@
 from typing import Optional
 import sys
+import numpy as np
 import open3d as o3d
 from tqdm import tqdm
 
@@ -119,6 +120,30 @@ def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
         # Persist cleaned colorless mesh (post triangle cleanup) for reuse/inspection
         colorless_mesh_clean_legacy = colorless_mesh.to_legacy()
         data_io.reconstruction.save_colorless_mesh_clean_legacy(mesh=colorless_mesh_clean_legacy)
+
+        # Optionally visualize cleaned (trimmed) colorless mesh after the raw point cloud
+        if config.visualize_colorless_pcd:
+            print("[Info] Visualizing cleaned colorless mesh ...")
+
+            # Apply a simple height-based pseudo-coloring (rainbow-like) so surfaces are visible
+            verts = np.asarray(colorless_mesh_clean_legacy.vertices)
+            if verts.size > 0:
+                z = verts[:, 2]
+                z_min, z_max = float(z.min()), float(z.max())
+                denom = (z_max - z_min) if z_max > z_min else 1.0
+                z_norm = (z - z_min) / denom
+
+                # Map normalized height to RGB (blue → green → red gradient)
+                colors = np.zeros((verts.shape[0], 3), dtype=np.float64)
+                colors[:, 0] = z_norm                   # R increases with height
+                colors[:, 1] = 1.0 - np.abs(z_norm - 0.5) * 2.0  # G peaks in mid-range
+                colors[:, 2] = 1.0 - z_norm             # B decreases with height
+                colors = np.clip(colors, 0.0, 1.0)
+                colorless_mesh_clean_legacy.vertex_colors = o3d.utility.Vector3dVector(colors)
+
+            geoms = [colorless_mesh_clean_legacy]
+            axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
+            o3d.visualization.draw_geometries(geoms + [axis], window_name="Clean Colorless Mesh")  # type: ignore
         
         log_step("Optimize color maps")
         colored_mesh, optimized_color_dataset_map = optimize_color_pose(vbg=vbg, data_io=data_io, config=config.color_optimization)
@@ -142,19 +167,32 @@ def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
                 number_of_points=num_sampled_points,
             )
 
-            data_io.reconstruction.save_colored_pcd_legacy(pcd=pcd)
+            pcd_legacy = pcd.to_legacy()
+            data_io.reconstruction.save_colored_pcd_legacy(pcd=pcd_legacy)
+
+            # Optionally visualize the final trimmed colored point cloud
+            if config.visualize_colored_mesh:
+                print("[Info] Visualizing colored point cloud ...")
+                pcds = [pcd_legacy]
+                axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
+                o3d.visualization.draw_geometries(pcds + [axis], window_name="Colored Point Cloud")  # type: ignore
 
     # Color aligned depth rendering
     if config.render_color_aligned_depth:
         log_step("Render color-aligned depth")
 
+        # Reuse the same extraction & cleanup parameters as color_optimization so
+        # geometry is consistent between the optimized mesh and the raycasting mesh.
         mesh = vbg.extract_triangle_mesh(
-            weight_threshold=config.color_aligned_depth_rendering.weight_threshold,
-            estimated_vertex_number=config.color_aligned_depth_rendering.estimated_vertex_number
+            weight_threshold=config.color_optimization.weight_threshold,
+            estimated_vertex_number=config.color_optimization.estimated_vertex_number
         )
 
         # Filter out small disconnected mesh components (e.g., floating body parts)
-        mesh = filter_mesh_components(mesh, min_triangle_count=config.color_aligned_depth_rendering.min_triangle_count)
+        mesh = filter_mesh_components(
+            mesh,
+            min_triangle_count=config.color_optimization.min_triangle_count
+        )
 
         scene = o3d.t.geometry.RaycastingScene(device=config.device)
         scene.add_triangles(mesh.cpu())

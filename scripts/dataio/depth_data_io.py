@@ -153,7 +153,8 @@ class DepthDataIO:
             except Exception as e:
                 print(f"[Error] Depth dataset cache is corrupted or invalid.\n{e}")
 
-        print(f"[Info] Depth dataset not found.")
+        # This is the optimized (pose-refined) depth dataset cache; it's expected to be missing on first run.
+        print(f"[Info] Optimized depth dataset not found. Will rebuild it.")
 
 
     def save_optimized_depth_dataset(self, side: Side, dataset: DepthDataset):
@@ -267,3 +268,14 @@ class DepthDataIO:
         file_path = linear_depth_dir / f'{timestamp}.png'
 
         cv2.imwrite(str(file_path), depth_map)
+
+
+    def get_linear_depth_timestamps(self, side: Side) -> list[int]:
+        """Return timestamps for existing linear depth PNGs for a given side."""
+        linear_depth_dir = self.depth_path_config.get_linear_depth_dir(side=side)
+        if not linear_depth_dir.exists():
+            return []
+
+        return sorted(
+            int(p.stem) for p in linear_depth_dir.glob("*.png") if p.stem.isdigit()
+        )

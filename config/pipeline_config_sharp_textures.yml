@@ -92,9 +92,8 @@ reconstruction:
     min_triangle_count: 500
 
   color_aligned_depth_rendering:
-    weight_threshold: 1.5
-    estimated_vertex_number: -1
-    min_triangle_count: 500
+    # Mesh extraction & component filtering parameters are now shared with
+    # `color_optimization` and configured only there.
     only_use_optimized_dataset: true
 
 

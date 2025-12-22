@@ -8,7 +8,7 @@ yuv_to_rgb:
 depth_to_linear:
   clip_near_m: 0.1 # Near clipping distance in meters for linear depth visualization
   clip_far_m: 5.0  # Far clipping distance in meters for linear depth visualization (adapted for ~5 m rooms)
-  use_cache: True # Whether to use the depth dataset cache
+  use_cache: False # Do not use depth dataset cache for batch runs; always rebuild
 
 reconstruction:
   device: "CPU:0"  # Device to run Open3D Tensor operations (CPU:0 or CUDA:0 if CUDA is available)
@@ -20,9 +20,9 @@ reconstruction:
   use_fragment_dataset_cache: false  # Use cached fragments if available
   use_optimized_dataset_cache: false  # Use cached optimized depth datasets if available
   use_colorless_vbg_cache: false  # Use precomputed TSDF (VoxelBlockGrid) without color
-  visualize_colorless_pcd: true  # Visualize the integrated point cloud before color refinement
+  visualize_colorless_pcd: false  # DISABLED for batch runs: do not open colorless point cloud viewer
   optimize_color_pose: true  # Optimize the poses of color images via mesh-to-image alignment
-  visualize_colored_mesh: true  # Visualize the colorized mesh after pose optimization
+  visualize_colored_mesh: false  # DISABLED for batch runs: do not open colored mesh/point cloud viewers
   sample_point_cloud_from_colored_mesh: false  # Sample a dense point cloud from the colored mesh
   points_per_vertex_ratio: 2.0  # Number of points to sample per mesh vertex
   render_color_aligned_depth: true  # Render synthetic depth maps aligned to the color images
@@ -94,3 +94,5 @@ reconstruction:
     # Mesh extraction & component filtering parameters are now shared with
     # `color_optimization` and configured only there.
     only_use_optimized_dataset: true
+
+

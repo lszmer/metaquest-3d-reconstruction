@@ -1,4 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import shutil
 import sys
 import traceback
 from typing import Callable, Optional
@@ -91,3 +92,14 @@ def convert_yuv_directory(
 
         if exception_count > 0:
             print(f"[Error] {exception_count} files failed due to exceptions.")
+
+        # Clean up raw YUVs only if the side finished without worker exceptions
+        yuv_dir = image_io.image_path_config.get_yuv_dir(side=side)
+        if exception_count == 0 and yuv_dir.exists():
+            try:
+                shutil.rmtree(yuv_dir)
+                print(f"[Info] Cleaned up raw YUV directory after conversion: {yuv_dir}")
+            except Exception as e:
+                print(f"[Warning] Failed to remove raw YUV directory {yuv_dir}: {e}")
+        elif exception_count > 0:
+            print(f"[Warning] Keeping raw YUV directory for debugging: {yuv_dir}")

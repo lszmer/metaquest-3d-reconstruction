@@ -19,15 +19,13 @@ class ImageDataIO:
 
     
     def _parse_timestamp_stem(self, stem: str, filename: str, prefix: str) -> Optional[int]:
-        """Return integer timestamp from stem, handling macOS sidecar prefixes."""
+        """Return integer timestamp from stem, handling macOS sidecar prefixes, quietly."""
         # Remove leading macOS resource-fork prefix if present
         if stem.startswith("._"):
             stem = stem[2:]
-            print(f"[Warning] {prefix} file had '._' prefix, using timestamp stem: {stem} ({filename})")
         elif stem.startswith("_"):
             # Defensive: strip stray leading underscore if present
             stem = stem.lstrip("_")
-            print(f"[Warning] {prefix} file had leading '_' prefix, using timestamp stem: {stem} ({filename})")
 
         if stem == "" or not stem.isdigit():
             print(f"[Warning] Skipping non-timestamped {prefix} file: {filename}")
@@ -232,14 +230,11 @@ class ImageDataIO:
 
         for path in self.image_path_config.get_rgb_image_paths(side=side):
             filename = path.name
-            stem = filename.split('.')[0]
-
-            # Skip files that do not start with a numeric timestamp (e.g., hidden or temp files)
-            if stem == "" or not stem.isdigit():
-                print(f"[Warning] Skipping non-timestamped RGB file: {filename}")
+            ts = self._parse_timestamp_stem(path.stem, filename, prefix="RGB")
+            if ts is None:
                 continue
 
-            timestamp = int(stem)
+            timestamp = ts
 
             pose = interpolator.interpolate_pose(timestamp)
             if pose is None:

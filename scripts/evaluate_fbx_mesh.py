@@ -1300,6 +1300,16 @@ def compare_meshes(reports: List[EvaluationReport], output_format: str = "text")
 
 def format_comparison_text(reports: List[EvaluationReport]) -> str:
     """Format comparison report as plain text."""
+    def get_fog_label(path: Path) -> str:
+        """Return a short label based on the file path (e.g. [Fog] / [NoFog])."""
+        path_str = str(path).lower()
+        # Check 'nofog' first so it isn't classified as 'fog'
+        if "nofog" in path_str:
+            return " [NoFog]"
+        if "fog" in path_str:
+            return " [Fog]"
+        return ""
+
     lines = []
     lines.append("=" * 100)
     lines.append("MESH QUALITY COMPARISON REPORT")
@@ -1310,14 +1320,18 @@ def format_comparison_text(reports: List[EvaluationReport]) -> str:
     lines.append("-" * 100)
     lines.append("RANKING (sorted by quality score)")
     lines.append("-" * 100)
-    lines.append(f"{'Rank':<6} {'Score':<8} {'File':<50} {'Vertices':<12} {'Faces':<12}")
+    lines.append(f"{'Rank':<6} {'Score':<8} {'File':<40} {'Vertices':<12} {'Faces':<12} {'Area':<10} {'Holes':<8}")
     lines.append("-" * 100)
     
     for rank, report in enumerate(reports, 1):
-        file_name = report.file_path.name[:47] + "..." if len(report.file_path.name) > 50 else report.file_path.name
+        fog_label = get_fog_label(report.file_path)
+        display_name = report.file_path.name + fog_label
+        if len(display_name) > 40:
+            display_name = display_name[:37] + "..."
         lines.append(
-            f"{rank:<6} {report.quality_score:<8.4f} {file_name:<50} "
+            f"{rank:<6} {report.quality_score:<8.4f} {display_name:<40} "
             f"{report.geometric.vertex_count:<12,} {report.geometric.face_count:<12,}"
+            f"{report.geometric.surface_area:<10.3f} {report.geometric.num_holes:<8}"
         )
     
     # Detailed comparison table
@@ -1328,15 +1342,20 @@ def format_comparison_text(reports: List[EvaluationReport]) -> str:
     # Key metrics table
     lines.append("\nGeometric Quality Metrics:")
     lines.append("-" * 100)
-    lines.append(f"{'Mesh':<30} {'Aspect':<8} {'Degenerate':<12} {'Non-Manifold':<15} {'Boundary':<10} {'Components':<12}")
+    lines.append(f"{'Mesh':<30} {'Aspect':<8} {'Degenerate':<12} {'Non-Manifold':<15} {'Boundary':<10} {'Holes':<8} {'Area':<10} {'Components':<12}")
     lines.append("-" * 100)
     for report in reports:
-        name = report.file_path.name[:28] + ".." if len(report.file_path.name) > 30 else report.file_path.name
+        fog_label = get_fog_label(report.file_path)
+        name = report.file_path.name + fog_label
+        if len(name) > 30:
+            name = name[:28] + ".."
         lines.append(
             f"{name:<30} {report.geometric.avg_aspect_ratio:<8.3f} "
             f"{report.geometric.degenerate_triangles:<12} "
             f"{report.geometric.num_non_manifold_edges + report.geometric.num_non_manifold_vertices:<15} "
             f"{report.geometric.num_boundary_edges:<10} "
+            f"{report.geometric.num_holes:<8} "
+            f"{report.geometric.surface_area:<10.3f} "
             f"{report.geometric.num_connected_components:<12}"
         )
     
@@ -1345,7 +1364,10 @@ def format_comparison_text(reports: List[EvaluationReport]) -> str:
     lines.append(f"{'Mesh':<30} {'Normal Dev':<12} {'Roughness':<12} {'Normal Consist':<15}")
     lines.append("-" * 100)
     for report in reports:
-        name = report.file_path.name[:28] + ".." if len(report.file_path.name) > 30 else report.file_path.name
+        fog_label = get_fog_label(report.file_path)
+        name = report.file_path.name + fog_label
+        if len(name) > 30:
+            name = name[:28] + ".."
         lines.append(
             f"{name:<30} {report.smoothness.avg_normal_deviation:<12.6f} "
             f"{report.smoothness.surface_roughness:<12.6f} "
@@ -1357,7 +1379,10 @@ def format_comparison_text(reports: List[EvaluationReport]) -> str:
     lines.append(f"{'Mesh':<30} {'Has Colors':<12} {'Coverage':<12} {'Consistency':<12}")
     lines.append("-" * 100)
     for report in reports:
-        name = report.file_path.name[:28] + ".." if len(report.file_path.name) > 30 else report.file_path.name
+        fog_label = get_fog_label(report.file_path)
+        name = report.file_path.name + fog_label
+        if len(name) > 30:
+            name = name[:28] + ".."
         has_colors = "Yes" if report.color.has_vertex_colors else "No"
         coverage = f"{report.color.vertex_color_coverage:.1f}%" if report.color.has_vertex_colors else "N/A"
         consistency = f"{report.color.color_consistency:.3f}" if report.color.has_vertex_colors else "N/A"
@@ -1430,6 +1455,7 @@ def format_comparison_json(reports: List[EvaluationReport]) -> str:
                 "num_non_manifold_vertices": report.geometric.num_non_manifold_vertices,
                 "num_boundary_edges": report.geometric.num_boundary_edges,
                 "num_holes": report.geometric.num_holes,
+                "surface_area": report.geometric.surface_area,
                 "num_connected_components": report.geometric.num_connected_components,
             },
             "smoothness": {
@@ -1449,7 +1475,17 @@ def format_comparison_json(reports: List[EvaluationReport]) -> str:
         }
         data["comparison"]["meshes"].append(mesh_data)
     
-    return json.dumps(data, indent=2)
+    # Ensure all NumPy types are converted to native Python types for JSON serialization
+    def default_converter(obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return str(obj)
+    
+    return json.dumps(data, indent=2, default=default_converter)
 
 
 def format_comparison_markdown(reports: List[EvaluationReport]) -> str:
@@ -1458,13 +1494,14 @@ def format_comparison_markdown(reports: List[EvaluationReport]) -> str:
     lines.append("# Mesh Quality Comparison Report")
     lines.append(f"\nComparing {len(reports)} meshes\n")
     lines.append("## Ranking\n")
-    lines.append("| Rank | Score | File | Vertices | Faces |")
-    lines.append("|------|-------|------|----------|-------|")
+    lines.append("| Rank | Score | File | Vertices | Faces | Surface Area | Holes |")
+    lines.append("|------|-------|------|----------|-------|--------------|-------|")
     
     for rank, report in enumerate(reports, 1):
         lines.append(
             f"| {rank} | {report.quality_score:.4f} | {report.file_path.name} | "
-            f"{report.geometric.vertex_count:,} | {report.geometric.face_count:,} |"
+            f"{report.geometric.vertex_count:,} | {report.geometric.face_count:,} | "
+            f"{report.geometric.surface_area:.3f} | {report.geometric.num_holes} |"
         )
     
     lines.append("\n## Detailed Metrics\n")
@@ -2757,6 +2794,7 @@ def format_comparison_html(reports: List[EvaluationReport]) -> str:
                                 <th>File Name</th>
                                 <th>Vertices</th>
                                 <th>Faces</th>
+                                <th>Surface Area</th>
                                 <th>Holes</th>
                             </tr>
                         </thead>
@@ -2782,6 +2820,7 @@ def format_comparison_html(reports: List[EvaluationReport]) -> str:
                                 <th>Non-Manifold</th>
                                 <th>Boundary Edges</th>
                                 <th>Holes</th>
+                                <th>Surface Area</th>
                                 <th>Components</th>
                                 <th>Manifold</th>
                                 <th>Watertight</th>
@@ -2876,6 +2915,7 @@ def format_comparison_html(reports: List[EvaluationReport]) -> str:
                     <td>${mesh.file_name}</td>
                     <td>${formatNumber(mesh.geometric.vertex_count)}</td>
                     <td>${formatNumber(mesh.geometric.face_count)}</td>
+                    <td>${mesh.geometric.surface_area.toFixed(3)}</td>
                     <td>${mesh.geometric.num_holes}</td>
                 `;
                 tbody.appendChild(row);
@@ -2895,6 +2935,7 @@ def format_comparison_html(reports: List[EvaluationReport]) -> str:
                     <td>${mesh.geometric.num_non_manifold_edges + mesh.geometric.num_non_manifold_vertices}</td>
                     <td>${formatNumber(mesh.geometric.num_boundary_edges)}</td>
                     <td><strong>${mesh.geometric.num_holes}</strong></td>
+                    <td>${mesh.geometric.surface_area.toFixed(3)}</td>
                     <td>${mesh.geometric.num_connected_components}</td>
                     <td>${mesh.geometric.is_manifold ? '✓' : '✗'}</td>
                     <td>${mesh.geometric.is_watertight ? '✓' : '✗'}</td>
