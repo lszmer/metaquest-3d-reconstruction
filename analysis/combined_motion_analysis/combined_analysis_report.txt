@@ -1,0 +1,38 @@
+================================================================================
+COMBINED HMD-CONTROLLER MOTION ANALYSIS
+================================================================================
+
+This analysis combines HMD body movement and controller hand movement
+data to create more robust metrics for analyzing user activity.
+
+Sample Sizes:
+  Fog condition: 13 sessions
+  NoFog condition: 13 sessions
+  Total: 26 sessions
+
+================================================================================
+COMBINED METRICS
+================================================================================
+
+1. Combined Total Distance: Sum of body and hand movement distances
+2. Combined Average Speed: Average of body and hand speeds
+3. Combined Peak Speed: Maximum of body and hand peak speeds
+4. Activity Score: Normalized combination of body and hand movement
+5. Motion Complexity: Combination of speeds and hand coordination
+6. Engagement Score: Combination of head and hand rotation
+7. Workspace Utilization: Combination of body displacement and hand workspace
+
+================================================================================
+STATISTICAL RESULTS
+================================================================================
+
+
+NON-SIGNIFICANT DIFFERENCES:
+--------------------------------------------------------------------------------
+Combined Total Distance: p=0.4992, d=-0.201
+Combined Average Speed: p=0.6971, d=-0.115
+Combined Peak Speed: p=0.2653, d=0.337
+Activity Score: p=0.5305, d=-0.186
+Motion Complexity: p=0.8259, d=-0.065
+Engagement Score: p=0.7606, d=0.090
+Workspace Utilization: p=0.3707, d=0.268

@@ -1,0 +1,56 @@
+================================================================================
+HMD MOTION ANALYSIS: FOG vs NOFOG COMPARISON
+================================================================================
+
+Sample Sizes:
+  Fog condition: 13 sessions
+  NoFog condition: 13 sessions
+  Total: 26 sessions
+  Participants: 13
+  Design: Paired (each participant has both Fog and NoFog measurements)
+
+================================================================================
+STATISTICAL RESULTS
+================================================================================
+
+NON-SIGNIFICANT DIFFERENCES (p >= 0.05):
+--------------------------------------------------------------------------------
+Average Body Speed: p=0.3976, Cohen's d=-0.253 (small)
+Average Head Angular Speed: p=0.1125, Cohen's d=0.494 (small)
+Cumulative Head Rotation: p=0.1887, Cohen's d=0.402 (small)
+Net Body Displacement: p=0.4828, Cohen's d=0.209 (small)
+Peak Body Speed: p=0.4810, Cohen's d=0.210 (small)
+Peak Head Angular Speed: p=0.0943, Cohen's d=0.524 (medium)
+Pitch Range: p=0.7869, Cohen's d=-0.175 (negligible)
+Roll Range: p=0.2734, Cohen's d=-0.004 (negligible)
+Total Body Distance: p=0.2859, Cohen's d=-0.322 (small)
+Yaw Range: p=0.3757, Cohen's d=-0.342 (small)
+
+================================================================================
+INTERPRETATION SUMMARY
+================================================================================
+
+Out of 10 metrics analyzed, 0 showed statistically significant differences between Fog and NoFog conditions.
+
+
+Effect Size Guidelines (Cohen's d):
+  |d| < 0.2:  Negligible effect
+  0.2 ≤ |d| < 0.5:  Small effect
+  0.5 ≤ |d| < 0.8:  Medium effect
+  |d| ≥ 0.8:  Large effect
+
+================================================================================
+METHODOLOGY
+================================================================================
+
+PAIRED DESIGN ANALYSIS:
+  • Each participant completed both Fog and NoFog conditions
+  • Paired statistical tests account for within-subject variability
+  • More powerful than independent samples tests for this design
+
+Statistical tests were chosen based on data distribution:
+  • Paired design: Shapiro-Wilk test on differences
+  • Normal differences: Paired t-test
+  • Non-normal differences: Wilcoxon signed-rank test
+  • Effect sizes calculated using Cohen's d
+  • Significance threshold: α = 0.05

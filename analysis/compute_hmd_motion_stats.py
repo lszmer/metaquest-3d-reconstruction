@@ -29,7 +29,12 @@ from typing import Iterable, List, Sequence
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from scipy.spatial.transform import Rotation as R
+
+# Set seaborn style for consistent plotting (if visualizations are added)
+sns.set_style("whitegrid")
+sns.set_palette("colorblind")
 
 
 REQUIRED_COLUMNS = [
@@ -48,6 +53,8 @@ REQUIRED_COLUMNS = [
 class MovementSummary:
     capture_name: str
     capture_path: str
+    participant: str | None
+    condition: str | None
     num_samples: int
     duration_seconds: float
     sampling_hz: float
@@ -122,21 +129,62 @@ def compute_euler_ranges(quaternions: np.ndarray) -> tuple[float, float, float]:
     return yaw_range, pitch_range, roll_range
 
 
+def load_participant_mapping(master_report_csv: Path | None) -> dict[str, tuple[str, str]]:
+    """Load participant and condition mapping from master report CSV.
+    
+    Returns dict mapping session_dir (as string) to (participant, condition) tuple.
+    """
+    if master_report_csv is None or not master_report_csv.exists():
+        return {}
+    
+    try:
+        df = pd.read_csv(master_report_csv)
+        if "session_dir" not in df.columns or "participant" not in df.columns or "condition" not in df.columns:
+            return {}
+        
+        mapping = {}
+        for _, row in df.iterrows():
+            session_dir = str(row["session_dir"])
+            participant = str(row["participant"])
+            condition = str(row["condition"])
+            mapping[session_dir] = (participant, condition)
+        
+        return mapping
+    except Exception as e:
+        print(f"[warn] Could not load participant mapping: {e}")
+        return {}
+
+
 def load_pose_dataframe(hmd_csv_path: Path) -> pd.DataFrame:
     if not hmd_csv_path.exists():
         raise FileNotFoundError(f"HMD poses CSV not found: {hmd_csv_path}")
 
-    df = pd.read_csv(hmd_csv_path)
+    # Check if file is empty
+    if hmd_csv_path.stat().st_size == 0:
+        raise ValueError(f"HMD poses CSV is empty: {hmd_csv_path}")
+
+    try:
+        df = pd.read_csv(hmd_csv_path)
+    except pd.errors.EmptyDataError:
+        raise ValueError(f"HMD poses CSV is empty or has no valid data: {hmd_csv_path}")
+
+    if df.empty:
+        raise ValueError(f"HMD poses CSV contains no rows: {hmd_csv_path}")
+
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"{hmd_csv_path} missing required columns: {missing}")
 
     df = df.sort_values("unix_time").reset_index(drop=True)
     df = df.dropna(subset=REQUIRED_COLUMNS)
+    
+    if df.empty:
+        raise ValueError(f"{hmd_csv_path} has no valid rows after filtering NaN values")
+
     return df
 
 
-def summarize_capture(capture_dir: Path) -> MovementSummary:
+def summarize_capture(capture_dir: Path, participant_mapping: dict[str, tuple[str, str]] | None = None) -> MovementSummary:
     hmd_csv = capture_dir / "hmd_poses.csv"
     df = load_pose_dataframe(hmd_csv)
 
@@ -165,9 +213,25 @@ def summarize_capture(capture_dir: Path) -> MovementSummary:
     body_avg_speed_kmh = body_avg_speed_mps * mps_to_kmh
     body_peak_speed_kmh = body_peak_speed_mps * mps_to_kmh
 
+    # Look up participant and condition from mapping
+    participant = None
+    condition = None
+    if participant_mapping:
+        capture_path_str = str(capture_dir)
+        if capture_path_str in participant_mapping:
+            participant, condition = participant_mapping[capture_path_str]
+        else:
+            # Try to infer condition from path
+            if "/Fog/" in capture_path_str:
+                condition = "Fog"
+            elif "/NoFog/" in capture_path_str:
+                condition = "NoFog"
+
     return MovementSummary(
         capture_name=capture_dir.name,
         capture_path=str(capture_dir),
+        participant=participant,
+        condition=condition,
         num_samples=len(df),
         duration_seconds=duration_seconds,
         sampling_hz=sampling_hz,
@@ -222,6 +286,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional CSV path to store aggregated summary across all captures.",
     )
+    parser.add_argument(
+        "--master_report_csv",
+        type=Path,
+        default=Path(__file__).parent / "master_fog_no_fog_report.csv",
+        help="Path to master report CSV (used when --mode All). Defaults to analysis/master_fog_no_fog_report.csv",
+    )
     return parser.parse_args()
 
 
@@ -232,8 +302,36 @@ def collect_capture_dirs(args: argparse.Namespace) -> list[Path]:
             raise ValueError("Provide --session_dir or choose --mode Fog|NoFog|All.")
         return [args.session_dir]
 
-    modes = ["Fog", "NoFog"] if args.mode == "All" else [args.mode]
     capture_dirs: list[Path] = []
+
+    # For "All" mode, load from master report CSV
+    if args.mode == "All":
+        if not args.master_report_csv.exists():
+            raise FileNotFoundError(
+                f"Master report CSV not found: {args.master_report_csv}\n"
+                "Required when using --mode All."
+            )
+        
+        df = pd.read_csv(args.master_report_csv)
+        if "session_dir" not in df.columns:
+            raise ValueError(f"Master report CSV missing 'session_dir' column: {args.master_report_csv}")
+        
+        for session_dir_str in df["session_dir"].dropna():
+            session_path = Path(session_dir_str)
+            if session_path.exists() and (session_path / "hmd_poses.csv").exists():
+                capture_dirs.append(session_path)
+            else:
+                print(f"[warn] Skipping missing/invalid session_dir from report: {session_path}")
+        
+        if not capture_dirs:
+            raise FileNotFoundError(
+                "No valid capture directories found in master report CSV. "
+                "Ensure session_dir paths exist and contain hmd_poses.csv"
+            )
+        return sorted(capture_dirs)
+
+    # For Fog/NoFog modes, scan directories as before
+    modes = [args.mode]
     for mode in modes:
         parent = args.root_dir / mode
         if not parent.exists():
@@ -248,21 +346,39 @@ def collect_capture_dirs(args: argparse.Namespace) -> list[Path]:
     return sorted(capture_dirs)
 
 
-def main(capture_dirs: Iterable[Path], aggregate_csv: Path | None) -> None:
+def main(capture_dirs: Iterable[Path], aggregate_csv: Path | None, master_report_csv: Path | None = None) -> None:
+    # Load participant mapping if master report is available
+    participant_mapping = load_participant_mapping(master_report_csv) if master_report_csv else None
+    
     summaries: List[MovementSummary] = []
+    skipped: List[tuple[Path, str]] = []
+    
     for capture_dir in capture_dirs:
-        summary = summarize_capture(capture_dir)
-        summaries.append(summary)
+        try:
+            summary = summarize_capture(capture_dir, participant_mapping)
+            summaries.append(summary)
 
-        capture_output = capture_dir / "analysis" / "hmd_movement_summary.csv"
-        write_summary_csv([summary], capture_output)
+            capture_output = capture_dir / "analysis" / "hmd_movement_summary.csv"
+            write_summary_csv([summary], capture_output)
+        except (FileNotFoundError, ValueError) as e:
+            error_msg = str(e)
+            skipped.append((capture_dir, error_msg))
+            print(f"[warn] Skipping {capture_dir.name}: {error_msg}")
+        except Exception as e:
+            error_msg = str(e)
+            skipped.append((capture_dir, error_msg))
+            print(f"[error] Unexpected error processing {capture_dir.name}: {error_msg}")
+
+    if skipped:
+        print(f"\n[info] Skipped {len(skipped)} capture(s) due to errors")
 
     if aggregate_csv:
         write_summary_csv(summaries, aggregate_csv)
+        print(f"[info] Processed {len(summaries)} capture(s) successfully")
 
 
 if __name__ == "__main__":
     args = parse_args()
     capture_dirs = collect_capture_dirs(args)
-    main(capture_dirs, args.aggregate_csv)
+    main(capture_dirs, args.aggregate_csv, args.master_report_csv)
 

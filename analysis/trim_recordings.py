@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 """
 Trim all recordings referenced in the master fog/no_fog report to a maximum
-duration (default: 20.0 seconds), while keeping all time-dependent files
-consistent (YUV/RGB images, depth maps & descriptors, HMD poses, confidence
-maps, linear depth, color-aligned depth) and clearing derived caches.
+duration (default: 20.0 seconds) or RGB frame count, while keeping all 
+time-dependent files consistent (YUV/RGB images, depth maps & descriptors, 
+HMD poses, confidence maps, linear depth, color-aligned depth) and clearing 
+derived caches.
+
+Session directories are automatically loaded from master_fog_no_fog_report.csv.
 
 Typical usage:
 
-    python analysis/trim_recordings_to_20s.py \\
+    # Trim by duration (default: 20 seconds)
+    python analysis/trim_recordings.py \\
         --master-report analysis/master_fog_no_fog_report.csv \\
         --max-duration-s 20.0
+
+    # Trim by RGB frame count
+    python analysis/trim_recordings.py \\
+        --master-report analysis/master_fog_no_fog_report.csv \\
+        --mode frames \\
+        --rgb-frame-limit 923
 
 Use --dry-run to only print what would be deleted/modified.
 """
@@ -25,7 +35,7 @@ DEFAULT_MASTER_REPORT = (
     Path(__file__).resolve().parent / "master_fog_no_fog_report.csv"
 )
 DEFAULT_MAX_DURATION_S = 20.0
-DEFAULT_YUV_FRAME_LIMIT = 923
+DEFAULT_RGB_FRAME_LIMIT = 923
 
 
 @dataclass
@@ -295,22 +305,22 @@ def analyze_session_time_bounds(session_dir: Path) -> TimeStats:
     )
 
 
-def compute_cutoff_from_yuv_frames(
+def compute_cutoff_from_rgb_frames(
     session_dir: Path, frame_limit: int
 ) -> Optional[int]:
     """
-    Determine cutoff timestamp based on the N-th earliest YUV frame across
+    Determine cutoff timestamp based on the N-th earliest RGB frame across
     left/right streams. Returns the cutoff timestamp in ms, or None if there
-    are fewer than `frame_limit` valid YUV frames.
+    are fewer than `frame_limit` valid RGB frames.
     """
     timestamps: list[int] = []
-    for dir_name in ("left_camera_raw", "right_camera_raw"):
-        stats = _gather_file_timestamps(session_dir / dir_name, ".yuv")
+    for dir_name in ("left_camera_rgb", "right_camera_rgb"):
+        stats = _gather_file_timestamps(session_dir / dir_name, ".png")
         # _gather_file_timestamps only returns min/max, so we need to re-list here
         dir_path = session_dir / dir_name
         if not dir_path.exists():
             continue
-        for file_path in sorted(dir_path.glob("*.yuv")):
+        for file_path in sorted(dir_path.glob("*.png")):
             ts = _parse_timestamp_stem(file_path.stem)
             if ts is None:
                 continue
@@ -345,7 +355,7 @@ def trim_session(
     max_duration_s: float,
     dry_run: bool,
     mode: str,
-    yuv_frame_limit: int,
+    rgb_frame_limit: int,
 ) -> None:
     if not session_dir.exists():
         print(f"[Skip] Session directory does not exist: {session_dir}")
@@ -368,17 +378,17 @@ def trim_session(
             f"-> cutoff at {max_duration_s:.3f}s (cutoff_ms={cutoff_ms})"
         )
     elif mode == "frames":
-        cutoff_ts = compute_cutoff_from_yuv_frames(session_dir, frame_limit=yuv_frame_limit)
+        cutoff_ts = compute_cutoff_from_rgb_frames(session_dir, frame_limit=rgb_frame_limit)
         if cutoff_ts is None:
             print(
-                f"[Skip] Not enough YUV frames (< {yuv_frame_limit}) to trim by frame count "
+                f"[Skip] Not enough RGB frames (< {rgb_frame_limit}) to trim by frame count "
                 f"for {session_dir}"
             )
             return
         cutoff_ms = cutoff_ts
         print(
-            f"[Trim] Session {session_dir} by YUV frames: "
-            f"cutoff at frame #{yuv_frame_limit} timestamp={cutoff_ms}"
+            f"[Trim] Session {session_dir} by RGB frames: "
+            f"cutoff at frame #{rgb_frame_limit} timestamp={cutoff_ms}"
         )
     else:
         print(f"[Error] Unknown trim mode '{mode}' for session {session_dir}")
@@ -429,13 +439,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         choices=["time", "frames"],
         default="time",
-        help="Trimming mode: 'time' (by duration) or 'frames' (by YUV frame count).",
+        help="Trimming mode: 'time' (by duration) or 'frames' (by RGB frame count).",
     )
     parser.add_argument(
-        "--yuv-frame-limit",
+        "--rgb-frame-limit",
         type=int,
-        default=DEFAULT_YUV_FRAME_LIMIT,
-        help="In 'frames' mode, keep only the first N YUV frames (default: 923).",
+        default=DEFAULT_RGB_FRAME_LIMIT,
+        help="In 'frames' mode, keep only the first N RGB frames (default: 923).",
     )
     parser.add_argument(
         "--dry-run",
@@ -452,13 +462,15 @@ def main() -> None:
         print(f"[Warning] No session_dir entries found in {args.master_report}")
         return
 
+    print(f"[Info] Found {len(session_dirs)} session directories from {args.master_report}")
+    
     for session_dir in session_dirs:
         trim_session(
             session_dir,
             max_duration_s=args.max_duration_s,
             dry_run=args.dry_run,
             mode=args.mode,
-            yuv_frame_limit=args.yuv_frame_limit,
+            rgb_frame_limit=args.rgb_frame_limit,
         )
 
 
