@@ -1,0 +1,366 @@
+Meta Quest 3D Reconstruction System – Technical Description
+
+1. Overall System Goal and Inputs
+
+The system implements an end-to-end 3D reconstruction pipeline for scenes captured with Meta Quest head-mounted displays, using data recorded by the Quest Reality Capture (QRC) logging application. The primary goal is to reconstruct a metrically consistent 3D scene representation—comprising a volumetric TSDF, a watertight mesh, and optional colored point clouds—from synchronized stereo passthrough images, per-frame depth maps, and calibrated camera poses.
+
+Each recording session is stored in a project directory (referred to as project_dir). This directory contains, for each camera side (LEFT and RIGHT):
+- Raw passthrough image streams in YUV format, indexed by timestamp.
+- Depth maps for each frame, with a device-specific depth encoding.
+- Camera intrinsics (fx, fy, cx, cy) and per-frame extrinsics, stored as positions and orientations in the Quest device coordinate frame.
+
+The system assumes that the QRC dataset is temporally ordered, that timestamps consistently link color and depth frames within and across views, and that camera intrinsics are constant within each side for a given session.
+
+2. Software Architecture
+
+The codebase is structured as a modular Python package organized into the following key components:
+- DataIO layer (`dataio` package): Provides a unified API (`DataIO`) to access all project data (color, depth, reconstruction outputs, RGBD fusion outputs) and corresponding file paths. It abstracts the physical on-disk layout behind typed dataset objects.
+- Model abstractions (`models` package): Defines core data structures, including:
+  - `CameraDataset`: sequences of frames with timestamps, per-frame camera extrinsics, intrinsics, and image sizes.
+  - `DepthDataset`: analogous structure for depth frames.
+  - `Side`: enumerates LEFT/RIGHT cameras.
+  - `Transforms`: stores positions and rotations in a specific coordinate system and supports conversion between coordinate systems (e.g., Quest, Open3D, COLMAP).
+- Processing pipelines (`processing` package):
+  - `yuv_conversion`: conversion of YUV passthrough images into standard RGB PNG images.
+  - `depth_conversion`: optional conversion of raw device depth into linear depth maps for visualization.
+  - `reconstruction`: Open3D-based volumetric fusion, including depth confidence estimation, pose optimization, TSDF integration, color map optimization, and color-aligned depth rendering.
+- Pipeline orchestration (`pipeline/pipeline_processor.py`): Encapsulates the end-to-end reconstruction process behind a `PipelineProcessor` class with methods:
+  - `convert_yuv_to_rgb()`
+  - `convert_depth_to_linear()`
+  - `reconstruct_scene()`
+  - `run_full_pipeline()`
+- Frontend scripts (`scripts` directory): Thin CLI entry points that connect user arguments to the `PipelineProcessor` and other utilities (e.g., COLMAP export, FBX mesh export).
+
+Configuration is centralized in a YAML file (`config/pipeline_config.yml`), parsed into strongly-typed configuration objects (`PipelineConfigs`, `ReconstructionConfig`, etc.). This configuration controls device selection (CPU/CUDA), enabling/disabling submodules, and all hyperparameters for reconstruction, filtering, and optimization.
+
+3. Data Ingestion and Preprocessing
+
+3.1 YUV to RGB Conversion
+
+Raw passthrough images are recorded in a device-specific YUV format. The script `scripts/convert_yuv_to_rgb.py` (and the corresponding `PipelineProcessor.convert_yuv_to_rgb`) convert these into 8-bit RGB images stored as PNG files:
+- Input: YUV images and their timestamps for each side.
+- Output: `left_camera_rgb/` and `right_camera_rgb/` directories under project_dir, containing per-frame RGB images named by timestamp.
+
+The pipeline first checks for existing RGB images to avoid redundant work:
+- It enumerates all YUV timestamps for each side.
+- It checks whether a corresponding PNG image already exists for each timestamp in the RGB directories.
+- If all RGB images exist, conversion is skipped; otherwise, only missing frames are converted.
+
+The conversion behavior is controlled by the `yuv_to_rgb` section in `pipeline_config.yml`:
+- `blur_filter`: optionally rejects images with low Laplacian variance (blurry images).
+- `blur_threshold`: numeric threshold for blur detection.
+- `exposure_filter`: optionally rejects under- or over-exposed frames.
+- `exposure_threshold_low` and `exposure_threshold_high`: exposure detection thresholds.
+
+This pre-filtering permits removing low-quality images prior to reconstruction, improving robustness of downstream multi-view consistency and mesh coloring.
+
+3.2 Optional Depth-to-Linear Conversion
+
+The script `scripts/convert_depth_to_linear_map.py` and `PipelineProcessor.convert_depth_to_linear()` provide an optional visualization-only step that converts raw depth maps into physically interpretable linear depth images (in meters), typically stored as grayscale images. The transformation uses:
+- `clip_near_m` and `clip_far_m` to map raw device depth values into a linear metric range.
+- `use_cache` to optionally reuse precomputed outputs.
+
+This step is not required for TSDF integration or pose optimization but is useful for validating sensor behavior and diagnosing scenes with problematic depth.
+
+4. Reconstruction Pipeline
+
+4.1 High-Level Function
+
+The core reconstruction logic is implemented in `processing/reconstruction/reconstruct_scene.py` as the function:
+  `reconstruct_scene(data_io: DataIO, config: ReconstructionConfig)`
+
+This function orchestrates a set of submodules that transform raw depth and color data into TSDF volumes, meshes, and optional aligned depth maps. It is called from:
+- `scripts/reconstruct_scene.py` for reconstruction-only runs.
+- `PipelineProcessor.reconstruct_scene()` and `scripts/run_full_pipeline.py` for end-to-end runs.
+
+4.2 Dataset Preparation
+
+If `reconstruction.use_dataset_cache` is disabled, the pipeline forces a fresh load-and-preprocess of depth and color datasets for each side:
+- Depth datasets: `DataIO.depth.load_depth_dataset(side, use_cache=False)`
+- Color datasets: `DataIO.color.load_color_dataset(side, use_cache=False)`
+
+These `DepthDataset` and `CameraDataset` objects contain:
+- Timestamps.
+- Per-frame extrinsic transforms (positions, rotations) in the QRC/Quest camera frame.
+- Intrinsic parameters and frame resolutions.
+
+When pose optimization is disabled, the pipeline converts these transforms into Open3D’s coordinate system:
+- `dataset.transforms = dataset.transforms.convert_coordinate_system(target_coordinate_system=CoordinateSystem.OPEN3D, is_camera=True)`
+
+This step harmonizes all frame poses with the internal geometry representation used by Open3D’s TSDF integration and raycasting modules.
+
+4.3 Depth Confidence Estimation (Multi-view Consistency)
+
+If `reconstruction.estimate_depth_confidences` is enabled, the system invokes:
+- `estimate_depth_confidences(depth_data_io=data_io.depth, config=config.confidence_estimation)`
+
+This module computes per-pixel depth confidence maps based on multi-view geometric consistency:
+- For each depth frame, neighboring frames within a temporal window (`target_frame_range`) are considered.
+- Depth values are reprojected into other views using known extrinsics and intrinsics, with a maximum depth threshold (`depth_max`).
+- A per-pixel error metric (e.g., reprojection or depth difference) is computed; values exceeding `error_threshold` are treated as inconsistent.
+- The system counts the number of consistent observations per pixel, and discards pixels with fewer than `valid_count_threshold` consistent hits.
+- The process can be parallelized via `use_multi_threading`.
+
+The resulting confidence maps are used later for:
+- Filtering depth data for pose optimization and TSDF integration.
+- Reducing the influence of outlier depth measurements (e.g., on specular or transparent surfaces).
+
+4.4 Depth Pose Optimization (Fragment-Based)
+
+If `reconstruction.optimize_depth_pose` is enabled, the pipeline constructs and runs a `DepthPoseOptimizer`:
+- Inputs:
+  - Depth datasets for each side.
+  - Confidence-filtered depth maps (if enabled).
+  - Initial camera poses derived from QRC logs.
+  - Fragment-generation and pose-refinement hyperparameters from `fragment_generation` and `fragment_pose_refinement` sections.
+- Outputs:
+  - An optimized `DepthDataset` for each side, with refined per-frame camera poses in the Open3D coordinate system.
+
+The optimizer operates on frame fragments:
+- Frames are grouped into sliding or non-overlapping fragments of fixed length (`fragment_size`).
+- Within each fragment, pose constraints are derived from depth-based alignment, with per-pixel filtering based on:
+  - `use_confidence_filtered_depth`.
+  - `confidence_threshold`.
+  - `valid_count_threshold`.
+  - `depth_max`.
+- Loop-closure constraints between fragments are optionally added based on:
+  - Spatial overlap (`overlap_ratio_threshold`).
+  - Image-gradient-based information density (`loop_yaw_info_density_threshold`).
+  - Geometric thresholds (`dist_threshold`, `edge_prune_threshold`).
+
+Global fragment poses are refined using a multi-scale TSDF and ICP procedure configured via `fragment_pose_refinement`:
+- TSDF voxel size, block resolution, and block count (`voxel_size`, `block_resolution`, `block_count`).
+- Truncation distance scaling (`trunc_voxel_multiplier`).
+- Multi-scale ICP pyramid parameters:
+  - `icp_voxel_sizes`: progressively smaller voxel sizes.
+  - `max_corr_dists`: per-level correspondence radii.
+  - `max_iterations`: iterations per level.
+  - `relative_fitnesses` and `relative_rmses`: convergence criteria.
+- ICP results are filtered based on `icp_fitness_threshold` and `icp_inlier_rmse_threshold`, and edges are pruned based on `edge_prune_threshold`.
+
+The final result is a globally consistent set of depth-camera poses that better explain the observed depth data than the raw device poses.
+
+4.5 TSDF Integration (Volumetric Fusion)
+
+The system uses Open3D’s tensor-based `VoxelBlockGrid` (VBG) to perform volumetric TSDF fusion across all depth frames. The key logic is:
+- If `use_colorless_vbg_cache` is enabled and a cached VBG exists (via `DataIO.reconstruction.load_colorless_vbg()`), it is reused to avoid re-integration.
+- Otherwise, the code iterates over sides and their optimized depth datasets:
+  - For each dataset and side, it calls an `integrate()` helper, which:
+    - Projects each (filtered) depth map into voxel space using the corresponding camera intrinsics and extrinsics.
+    - Accumulates TSDF values and weights within a 3D voxel grid with:
+      - `voxel_size`: metric resolution of voxels.
+      - `block_resolution`: number of voxels per block.
+      - `block_count`: maximum number of voxel blocks in the grid.
+      - `depth_max`: maximum depth considered.
+      - `trunc_voxel_multiplier`: TSDF truncation distance as a multiple of voxel size.
+      - `device`: compute target (e.g., "CPU:0" or "CUDA:0").
+    - Optionally uses confidence-filtered depth maps per:
+      - `use_confidence_filtered_depth`.
+      - `confidence_threshold`.
+      - `valid_count_threshold`.
+    - Optionally merges results into an existing VBG (multi-side and multi-fragment integration).
+
+The resulting TSDF volume is stored as a `VoxelBlockGrid` with signed distance and weight fields, and is saved for reuse:
+- `DataIO.reconstruction.save_colorless_vbg(vbg)`.
+
+If `visualize_colorless_pcd` is enabled, the system:
+- Extracts a colorless point cloud from the TSDF (`vbg.extract_point_cloud()`).
+- Converts it to a legacy Open3D geometry.
+- Visualizes it alongside a coordinate-frame mesh using an interactive viewer. The full-pipeline script captures viewing time to allow wall-clock runtime statistics excluding user visualization time.
+
+4.6 Color Map Optimization and Colored Mesh Extraction
+
+If `reconstruction.optimize_color_pose` is enabled, the system performs a color map optimization stage akin to Open3D’s color-ICP pipeline:
+- First, it extracts a colorless mesh from the TSDF using the parameters in `color_optimization`:
+  - `weight_threshold`: minimum TSDF weight to retain a surface voxel as part of the mesh.
+  - `estimated_vertex_number`: optional prior on the number of mesh vertices for allocation.
+- The mesh is then filtered to remove small isolated components using `filter_mesh_components()` with `min_triangle_count` (e.g., to remove floating fragments like partial limb reconstructions).
+
+The central color pose optimization is performed by:
+- `colored_mesh, optimized_color_dataset_map = optimize_color_pose(vbg, data_io, config.color_optimization)`
+
+This module:
+- Treats the TSDF mesh as a geometric reference.
+- Refines per-frame color-camera poses to minimize photometric inconsistency between projected mesh colors and actual RGB images, over a subset of keyframes selected via `interval`.
+- Produces:
+  - A colored surface mesh with texture information baked per vertex or per face.
+  - Optimized color datasets (per side) with refined camera poses that better align color images with geometry.
+
+The outputs are:
+- Persistence of the colored mesh (legacy Open3D format) via `DataIO.reconstruction.save_colored_mesh_legacy()`.
+- Persistence of optimized color datasets via `DataIO.color.save_optimized_color_dataset(dataset, side)`.
+
+If `visualize_colored_mesh` is enabled, the colored mesh is displayed alongside a coordinate frame using an interactive Open3D viewer.
+
+If `sample_point_cloud_from_colored_mesh` is enabled, the system further:
+- Computes the number of points to sample as:
+  - `num_sampled_points = vertex_count * points_per_vertex_ratio`
+- Uniformly samples the colored mesh using Open3D’s `sample_points_uniformly`.
+- Saves the resulting colored point cloud via `DataIO.reconstruction.save_colored_pcd_legacy()`.
+
+4.7 Color-Aligned Depth Rendering
+
+If `reconstruction.render_color_aligned_depth` is enabled, the system synthesizes depth maps that are geometrically aligned with the color images. This is useful for downstream RGB-D pipelines that expect depth in the color-camera frame (e.g., RGB-D SLAM or NeRF-style methods).
+
+The procedure is:
+- Extract a mesh from the TSDF using parameters in `color_aligned_depth_rendering`:
+  - `weight_threshold`, `estimated_vertex_number`, `min_triangle_count`.
+- Initialize an Open3D `RaycastingScene` with this mesh.
+- Define a helper function `render_color_aligned_depth_map(dataset)`, which:
+  - Iterates over each frame in a `CameraDataset`.
+  - For each frame, uses `raycast_in_color_view` to raycast from the camera pose into the mesh, computing metric depth along each ray.
+  - Saves the resulting depth map to disk via `DataIO.rgbd.save_color_aligned_depth(depth_map, side, timestamp)`.
+
+For each side:
+- If optimized color datasets are available (from color map optimization), the system optionally renders:
+  - Depth maps for frames that are not part of the optimized dataset (if `only_use_optimized_dataset` is false).
+  - Depth maps for all frames in the optimized dataset.
+- If no optimized datasets exist and `only_use_optimized_dataset` is false, the system renders depth maps for the original color dataset.
+
+The final output is a set of depth images in the color-coordinate frame, stored under a reconstruction or RGBD output directory and indexed by side and timestamp.
+
+5. End-to-End Orchestration and Timing
+
+5.1 Dedicated Reconstruction and Conversion Scripts
+
+The repository exposes several command-line entry points:
+- `scripts/convert_yuv_to_rgb.py`: Converts YUV passthrough to RGB PNGs.
+- `scripts/convert_depth_to_linear_map.py`: Converts raw depth to linear depth maps (optional).
+- `scripts/reconstruct_scene.py`: Runs only the reconstruction pipeline (TSDF + mesh + optional confidence and color alignment).
+- `scripts/build_colmap_project.py`: Exports a COLMAP-compatible project from color camera datasets and optional colored point cloud.
+
+Each script:
+- Uses `argparse` for command-line argument parsing.
+- Requires `--project_dir` and optional `--config` path.
+- Validates directories and ensures required resources exist.
+
+5.2 Full Pipeline Runner with Session Selection and FBX Export
+
+The script `scripts/run_full_pipeline.py` orchestrates the entire workflow:
+- Step 1: Convert YUV to RGB:
+  - Calls `PipelineProcessor.convert_yuv_to_rgb()`.
+- Step 2: Convert depth to linear:
+  - Calls `PipelineProcessor.convert_depth_to_linear()`.
+- Step 3: Reconstruct scene:
+  - Launches `scripts/reconstruct_scene.py` as a subprocess to run reconstruction, capturing stdout and stderr.
+  - Parses visualization timing markers (`[VIS] COLORLESS_VIEW_SECONDS:`, `[VIS] COLORED_VIEW_SECONDS:`) to compute and subtract interactive visualization time from total runtime.
+
+The script supports two ways to select a project:
+- Direct session directory via `--session_dir`.
+- Base project directory via `--project_dir`, from which it selects the latest session directory whose name matches the pattern `YYYYMMDD_HHMMSS`.
+- If neither is provided, it falls back to a default base path (`~/Documents/QuestRealityCapture`) and selects the latest session.
+
+After reconstruction, the script optionally invokes `convert_reconstruction_mesh_to_fbx()`:
+- Looks for `reconstruction/color_mesh.ply` in the project directory.
+- If it exists, runs `scripts/utils/convert_ply_to_fbx_aspose.py` to convert the PLY mesh into an FBX file using the Aspose.3D library.
+
+The script then computes runtime statistics:
+- Total wall-clock runtime.
+- Time spent in visualization (accumulated from `[VIS]` log lines).
+- Adjusted runtime (wall-clock minus visualization time).
+- Approximate number of images per side and seconds-per-capture.
+
+These statistics are:
+- Printed to the console.
+- Saved to `pipeline_runtime.txt` in the project directory.
+
+6. COLMAP Export Functionality
+
+The script `scripts/build_colmap_project.py` exports the reconstructed data as a COLMAP project:
+- Input:
+  - `project_dir` pointing to the QRC session.
+  - `output_dir` where COLMAP files will be written.
+  - Flags `--use_colored_pointcloud` and `--use_optimized_color_dataset`.
+  - `--interval` specifying the frame subsampling factor.
+
+The export procedure is:
+1. Create `DataIO` for the project.
+2. Load color camera datasets:
+   - If `--use_optimized_color_dataset` is set:
+     - Attempt to load optimized color datasets for each side.
+     - Fall back to original color datasets if none are found.
+3. For each side:
+   - Convert transforms to COLMAP’s coordinate system with `CoordinateSystem.COLMAP` and `is_camera=True`.
+   - Subsample the dataset using the given interval.
+   - Construct a `Camera` model (`PINHOLE`) using the first frame’s intrinsics.
+   - For each selected frame:
+     - Copy the RGB image to `output_dir/images` with a standardized filename (`{Side}_{timestamp}.png`).
+     - Create an `Image` entry with:
+       - Quaternion rotation in COLMAP format (w, x, y, z).
+       - Translation vector in COLMAP coordinates.
+       - Camera ID and filename.
+       - Empty 2D–3D correspondences (SfM is intended to be run downstream in COLMAP, not pre-populated).
+4. If `--use_colored_pointcloud` is enabled:
+   - Load the colored point cloud via `DataIO.reconstruction.load_colored_pcd()`.
+   - Convert point positions from Open3D to COLMAP coordinate system (`CoordinateSystem.COLMAP`, `is_camera=False`, `skip_rotation=True`).
+   - Create `Point3D` objects with positions and RGB colors, leaving reprojection error and correspondences empty.
+5. Write `cameras.bin`, `images.bin`, and `points3D.bin` using COLMAP’s binary I/O utilities (`write_model`).
+
+The resulting directory `output_dir/distorted/sparse/0` and `output_dir/images` form a complete COLMAP project that can be opened by COLMAP’s GUI or used by command-line tools for SfM and MVS pipelines.
+
+7. Output Directory Layout
+
+After a full pipeline run, a typical project directory under project_dir contains:
+- `left_camera_rgb/` and `right_camera_rgb/`: per-frame RGB PNGs for each side, named by timestamp.
+- `reconstruction/`:
+  - `tsdf/`: serialized TSDF volumes and intermediate VoxelBlockGrid representations.
+  - `mesh/`: extracted meshes (colorless and colored).
+  - `point_cloud/`: sampled colored point clouds.
+  - `aligned_depth/`: depth maps rendered in the color-camera frame.
+  - `color_mesh.ply`: primary colored mesh used for export and FBX conversion.
+- `colmap_export/`: optional COLMAP export directory if `build_colmap_project.py` is run.
+- `config/pipeline_config.yml`: pipeline configuration snapshot for the session.
+- `pipeline_runtime.txt`: end-to-end runtime and per-frame timing statistics.
+
+This structured layout facilitates downstream consumption of the outputs by third-party tools (COLMAP, NeRF pipelines, game engines via FBX, etc.).
+
+8. Coordinate Systems and Pose Conventions
+
+The system explicitly manages coordinate-system conversions to harmonize data across:
+- Quest/Android Camera2 API raw poses.
+- Open3D’s internal coordinate frames.
+- COLMAP’s structure-from-motion conventions.
+
+Key aspects:
+- Raw camera poses (translation and quaternion rotation) are stored directly as logged from the Android Camera2 API in newer versions of QRC. For older logs, a deterministic mapping is provided:
+  - Translation: (x, y, z) → (x, y, -z).
+  - Quaternion: (x, y, z, w) → (-x, -y, z, w).
+- `Transforms` objects track both positions and rotations along with the current coordinate system identifier.
+- Conversion functions (`convert_coordinate_system`) adjust both translation and orientation as required, with explicit `is_camera` flags to distinguish camera frames from world/point frames.
+- For Open3D:
+  - Camera extrinsics are expressed in an “camera-to-world” or “world-to-camera” form consistent with Open3D’s projection and raycasting APIs, depending on context.
+  - All TSDF integration and raycasting operate in an Open3D-compatible world coordinate frame.
+- For COLMAP:
+  - Camera rotations are stored as `qvec` in (w, x, y, z) order.
+  - Translations `tvec` correspond to COLMAP’s convention for camera centers and projection matrices.
+
+By explicitly encoding and converting coordinate systems, the system ensures that volumetric fusion, color alignment, and SfM export are geometrically consistent.
+
+9. Implementation Details and Dependencies
+
+The implementation is in Python and relies on the following main libraries:
+- Open3D (tensor and legacy APIs) for TSDF fusion, mesh extraction, raycasting, and interactive visualization.
+- NumPy for numerical operations.
+- tqdm for progress visualization in long-running loops.
+- COLMAP’s model I/O Python bindings (included under `scripts/third_party/colmap`) for reading/writing binary `cameras.bin`, `images.bin`, and `points3D.bin`.
+- Aspose.3D (optional) for converting PLY meshes to FBX format for use in DCC tools and game engines.
+
+The repository includes a Conda environment specification (`environment.yml`) capturing compatible library versions. The recommended setup uses:
+- `conda env create -f environment.yml`
+- `conda activate mq3drecon`
+
+10. Extensibility and Custom Processing
+
+End-users can leverage the unified `DataIO` interface and the typed datasets to implement custom processing:
+- `DataIO(project_dir)` creates a handle to all project data.
+- `data_io.depth.load_depth_dataset(Side.LEFT)` and `data_io.color.load_color_dataset(Side.LEFT)` expose depth and color sequences with timestamps and transforms.
+- Transforms can be converted into other coordinate systems via `dataset.transforms.convert_coordinate_system(...)`.
+
+This design enables researchers to:
+- Integrate new reconstruction algorithms (e.g., learned depth inpainting, neural rendering).
+- Replace or augment the existing depth confidence and pose optimization modules.
+- Implement additional exports (e.g., Nerfstudio format) using the same camera and geometry representations.
+
+Overall, the system provides a configurable, modular pipeline that converts raw Quest Reality Capture logs into high-quality 3D reconstructions and standardized camera datasets suitable for both classical and learning-based 3D vision research.
+
+

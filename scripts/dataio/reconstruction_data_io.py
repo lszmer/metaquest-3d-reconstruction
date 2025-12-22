@@ -54,6 +54,29 @@ class ReconstructionDataIO:
 
         vbg.save(str(colorless_vbg_path))
 
+    def save_colorless_pcd_legacy(self, pcd: o3d.geometry.PointCloud):
+        colorless_pcd_path = self.reconstruction_path_config.get_colorless_pcd_path()
+        colorless_pcd_path.parent.mkdir(parents=True, exist_ok=True)
+
+        o3d.io.write_point_cloud(
+            filename=str(colorless_pcd_path),
+            pointcloud=pcd,
+            write_ascii=False,
+            compressed=True
+        )
+
+    def save_colorless_mesh_raw_legacy(self, mesh: o3d.geometry.TriangleMesh):
+        raw_mesh_path = self.reconstruction_path_config.get_colorless_mesh_raw_path()
+        raw_mesh_path.parent.mkdir(parents=True, exist_ok=True)
+
+        o3d.io.write_triangle_mesh(str(raw_mesh_path), mesh)
+
+    def save_colorless_mesh_clean_legacy(self, mesh: o3d.geometry.TriangleMesh):
+        clean_mesh_path = self.reconstruction_path_config.get_colorless_mesh_clean_path()
+        clean_mesh_path.parent.mkdir(parents=True, exist_ok=True)
+
+        o3d.io.write_triangle_mesh(str(clean_mesh_path), mesh)
+
 
     def load_colored_mesh(self) -> Optional[o3d.t.geometry.TriangleMesh]:
         color_mesh_path = self.reconstruction_path_config.get_colored_mesh_path()

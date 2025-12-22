@@ -85,10 +85,14 @@ def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
 
     data_io.reconstruction.save_colorless_vbg(vbg=vbg)
 
+    # Extract and persist colorless point cloud for inspection/reuse
+    colorless_pcd_legacy = vbg.extract_point_cloud().to_legacy()
+    data_io.reconstruction.save_colorless_pcd_legacy(pcd=colorless_pcd_legacy)
+
     if config.visualize_colorless_pcd:
         print("[Info] Visualizing colorless point cloud ...")
 
-        pcds = [vbg.extract_point_cloud().to_legacy()]
+        pcds = [colorless_pcd_legacy]
         axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.6, origin=[0, 0, 0])
         o3d.visualization.draw_geometries(pcds + [axis], window_name="Colorless Point Cloud") # type: ignore        
 
@@ -101,12 +105,20 @@ def reconstruct_scene(data_io: DataIO, config: ReconstructionConfig):
             weight_threshold=config.color_optimization.weight_threshold,
             estimated_vertex_number=config.color_optimization.estimated_vertex_number
         )
+
+        # Persist raw (unfiltered) colorless mesh for inspection/debug
+        colorless_mesh_legacy = colorless_mesh.to_legacy()
+        data_io.reconstruction.save_colorless_mesh_raw_legacy(mesh=colorless_mesh_legacy)
         
         # Filter out small disconnected mesh components
         colorless_mesh = filter_mesh_components(
             colorless_mesh, 
             min_triangle_count=config.color_optimization.min_triangle_count
         )
+
+        # Persist cleaned colorless mesh (post triangle cleanup) for reuse/inspection
+        colorless_mesh_clean_legacy = colorless_mesh.to_legacy()
+        data_io.reconstruction.save_colorless_mesh_clean_legacy(mesh=colorless_mesh_clean_legacy)
         
         log_step("Optimize color maps")
         colored_mesh, optimized_color_dataset_map = optimize_color_pose(vbg=vbg, data_io=data_io, config=config.color_optimization)

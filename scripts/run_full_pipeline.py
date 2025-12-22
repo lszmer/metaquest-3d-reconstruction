@@ -7,18 +7,6 @@ Full pipeline runner that orchestrates the complete 3D reconstruction workflow:
 4. Convert PLY mesh to FBX
 """
 
-# latest_folder=$(adb shell "ls -1t /sdcard/Android/data/com.CHL.RealityLog/files/" | head -n 1)
-# latest_folder=$(adb shell "ls -1t /sdcard/Android/data/com.CHL.Fog_RealityLog/files/" | head -n 1)
-
-# adb shell "ls /sdcard/Android/data/com.CHL.RealityLog/files/$latest_folder/left_depth"
-# adb shell "ls /sdcard/Android/data/com.CHL.Fog_RealityLog/files/$latest_folder/left_depth"
-
-# adb pull "/sdcard/Android/data/com.CHL.NoFog_RealityLog/files/$(adb shell 'ls -1t /sdcard/Android/data/com.CHL.NoFog_RealityLog/files/ | head -n 1')" ~/Documents/QuestRealityCapture_NoFog
-# adb pull "/sdcard/Android/data/com.CHL.Fog_RealityLog/files/$(adb shell 'ls -1t /sdcard/Android/data/com.CHL.Fog_RealityLog/files/ | head -n 1')" ~/Documents/QuestRealityCapture_Fog
-
-# adb pull "/sdcard/Android/data/com.CHL.Fog_RealityLog/files/20251209_013412" ~/Documents/QuestRealityCapture_Fog/
-# 20251209_013412
-
 import argparse
 from pathlib import Path
 from typing import Optional

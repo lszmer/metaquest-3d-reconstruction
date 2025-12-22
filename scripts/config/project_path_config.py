@@ -229,6 +229,15 @@ class ReconstructionPathConfig:
     def get_colorless_vbg_path(self) -> Path:
         return self.project_dir / "reconstruction/colorless_vbg.npz"
 
+    def get_colorless_pcd_path(self) -> Path:
+        return self.project_dir / "reconstruction/colorless.ply"
+
+    def get_colorless_mesh_raw_path(self) -> Path:
+        return self.project_dir / "reconstruction/colorless_mesh_raw.ply"
+
+    def get_colorless_mesh_clean_path(self) -> Path:
+        return self.project_dir / "reconstruction/colorless_mesh_clean.ply"
+
 
     def get_colored_mesh_path(self) -> Path:
         return self.project_dir / "reconstruction/color_mesh.ply"

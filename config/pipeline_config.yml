@@ -7,7 +7,7 @@ yuv_to_rgb:
 
 depth_to_linear:
   clip_near_m: 0.1 # Near clipping distance in meters for linear depth visualization
-  clip_far_m: 3.0  # Far clipping distance in meters for linear depth visualization
+  clip_far_m: 5.0  # Far clipping distance in meters for linear depth visualization (adapted for ~5 m rooms)
   use_cache: True # Whether to use the depth dataset cache
 
 reconstruction:
@@ -23,23 +23,23 @@ reconstruction:
   visualize_colorless_pcd: true  # Visualize the integrated point cloud before color refinement
   optimize_color_pose: true  # Optimize the poses of color images via mesh-to-image alignment
   visualize_colored_mesh: true  # Visualize the colorized mesh after pose optimization
-  sample_point_cloud_from_colored_mesh: true  # Sample a dense point cloud from the colored mesh
+  sample_point_cloud_from_colored_mesh: false  # Sample a dense point cloud from the colored mesh
   points_per_vertex_ratio: 2.0  # Number of points to sample per mesh vertex
   render_color_aligned_depth: true  # Render synthetic depth maps aligned to the color images
 
   confidence_estimation:
     target_frame_range: 10  # Number of adjacent frames to compare for consistency
-    depth_max: 3.0  # Maximum depth value considered during reprojection
-    error_threshold: 0.05  # Distance threshold to consider a correspondence as inconsistent
+    depth_max: 4.0  # Maximum depth value considered during reprojection (adapted for ~5 m rooms)
+    error_threshold: 0.08  # More tolerant distance threshold (less conservative, keeps more depth)
     skip_if_output_dir_exists: true  # Recompute even if confidence output directory already exist
     use_multi_threading: true  # Enable multi-threaded confidence computation
 
   fragment_generation:
     fragment_size: 100  # Number of frames per fragment
     use_confidence_filtered_depth: true  # Use only confident depth pixels for pose estimation
-    confidence_threshold: 0.05  # Minimum confidence score to keep a depth pixel
-    valid_count_threshold: 4 # Minimum number of supporting observations required to consider a depth pixel valid
-    depth_max: 3.0  # Max depth value used for fragment-level processing
+    confidence_threshold: 0.02  # Lower threshold to keep more pixels (less conservative)
+    valid_count_threshold: 2 # Fewer supporting observations required (fills more surfaces, at cost of noise)
+    depth_max: 4.0  # Max depth value used for fragment-level processing (adapted for room scale)
     odometry_loop_interval: 10  # Frequency (in fragments) to check for loop closure
     overlap_ratio_threshold: 0.1  # Overlap ratio threshold to consider loop candidates
     loop_yaw_info_density_threshold: 0.3  # Threshold on image gradient information for loop matching
@@ -49,13 +49,13 @@ reconstruction:
 
   fragment_pose_refinement:
     use_confidence_filtered_depth: true
-    confidence_threshold: 0.05
-    valid_count_threshold: 4 # Minimum number of supporting observations required to consider a depth pixel valid
+    confidence_threshold: 0.02
+    valid_count_threshold: 2 # Fewer observations required to consider a depth pixel valid
     voxel_size: 0.01  # TSDF voxel size
     block_resolution: 16  # Resolution of each voxel block (in voxels)
     block_count: 50000  # Total number of blocks in the TSDF volume
-    depth_max: 1.5
-    trunc_voxel_multiplier: 8.0  # Truncation distance = multiplier * voxel size
+    depth_max: 4.0  # Refine poses over the full room scale
+    trunc_voxel_multiplier: 10.0  # Slightly larger truncation band to reduce small holes
     use_pre_filtering: true  # Pre-filter fragment alignments before ICP
     pre_filter_every_k_points: 30  # Sampling interval for pre-filtering
     pre_filter_max_corr_dist: 0.1
@@ -74,24 +74,24 @@ reconstruction:
 
   depth_integration:
     use_confidence_filtered_depth: true
-    confidence_threshold: 0.05
-    valid_count_threshold: 4
+    confidence_threshold: 0.02
+    valid_count_threshold: 2
     voxel_size: 0.01
     block_resolution: 16
     block_count: 50000
-    depth_max: 1.5
-    trunc_voxel_multiplier: 8.0
+    depth_max: 4.0  # Integrate depths out to ~4 m to cover a 5 m room
+    trunc_voxel_multiplier: 10.0  # Wider truncation band for more complete but smoother surfaces
 
   color_optimization:
-    weight_threshold: 3.0  # Minimum TSDF weight to retain voxel during optimization
+    weight_threshold: 1.5  # Lower weight threshold to include less-observed voxels (reduces holes)
     estimated_vertex_number: -1  # Optional: estimate number of vertices (-1 to auto-compute)
     interval: 100  # Keyframe interval for color pose optimization
     max_iteration: 100  # Max number of iterations for pose refinement
     use_dataset_cache: true
-    min_triangle_count: 2000  # Minimum triangle count to keep a mesh component (filters out floating fragments)
+    min_triangle_count: 500  # Keep smaller components; less aggressive filtering of partial surfaces
 
   color_aligned_depth_rendering:
-    weight_threshold: 3.0  # Minimum TSDF weight to extract mesh surface
+    weight_threshold: 1.5  # Match color_optimization: less conservative surface extraction
     estimated_vertex_number: -1
-    min_triangle_count: 2000  # Minimum triangle count to keep a mesh component (filters out floating fragments)
+    min_triangle_count: 500  # Keep smaller components in the rendered-geometry mesh as well
     only_use_optimized_dataset: true

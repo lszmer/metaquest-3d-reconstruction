@@ -18,22 +18,43 @@ class ImageDataIO:
         self.image_path_config = image_path_config
 
     
+    def _parse_timestamp_stem(self, stem: str, filename: str, prefix: str) -> Optional[int]:
+        """Return integer timestamp from stem, handling macOS sidecar prefixes."""
+        # Remove leading macOS resource-fork prefix if present
+        if stem.startswith("._"):
+            stem = stem[2:]
+            print(f"[Warning] {prefix} file had '._' prefix, using timestamp stem: {stem} ({filename})")
+        elif stem.startswith("_"):
+            # Defensive: strip stray leading underscore if present
+            stem = stem.lstrip("_")
+            print(f"[Warning] {prefix} file had leading '_' prefix, using timestamp stem: {stem} ({filename})")
+
+        if stem == "" or not stem.isdigit():
+            print(f"[Warning] Skipping non-timestamped {prefix} file: {filename}")
+            return None
+
+        return int(stem)
+
     def get_yuv_timestamps(self, side: Side) -> list[int]:
         yuv_files = self.image_path_config.get_yuv_image_paths(side=side)
-        return [
-            int(yuv_file.stem)
-            for yuv_file
-            in yuv_files
-        ]
+        timestamps: list[int] = []
+        for yuv_file in yuv_files:
+            ts = self._parse_timestamp_stem(yuv_file.stem, yuv_file.name, prefix="YUV")
+            if ts is None:
+                continue
+            timestamps.append(ts)
+        return timestamps
 
     
     def get_rgb_timestamps(self, side: Side) -> list[int]:
         rgb_files = self.image_path_config.get_rgb_image_paths(side=side)
-        return [
-            int(rgb_file.stem)
-            for rgb_file
-            in rgb_files
-        ]
+        timestamps: list[int] = []
+        for rgb_file in rgb_files:
+            ts = self._parse_timestamp_stem(rgb_file.stem, rgb_file.name, prefix="RGB")
+            if ts is None:
+                continue
+            timestamps.append(ts)
+        return timestamps
 
     
     def load_yuv(self, side: Side, timestamp: int) -> np.ndarray:
@@ -211,7 +232,14 @@ class ImageDataIO:
 
         for path in self.image_path_config.get_rgb_image_paths(side=side):
             filename = path.name
-            timestamp = int(filename.split('.')[0])
+            stem = filename.split('.')[0]
+
+            # Skip files that do not start with a numeric timestamp (e.g., hidden or temp files)
+            if stem == "" or not stem.isdigit():
+                print(f"[Warning] Skipping non-timestamped RGB file: {filename}")
+                continue
+
+            timestamp = int(stem)
 
             pose = interpolator.interpolate_pose(timestamp)
             if pose is None:

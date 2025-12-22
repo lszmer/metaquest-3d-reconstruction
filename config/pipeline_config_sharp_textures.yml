@@ -1,0 +1,100 @@
+yuv_to_rgb:
+  # Enable more aggressive input filtering to reduce motion blur and bad exposure frames
+  blur_filter: true      # Enable image blur filtering
+  blur_threshold: 50.0   # Same starting threshold; can be tuned based on your data
+  exposure_filter: true        # Enable image exposure filtering
+  exposure_threshold_low: 0.05  # Underexposure detection threshold
+  exposure_threshold_high: 0.05 # Overexposure detection threshold
+
+depth_to_linear:
+  clip_near_m: 0.1
+  clip_far_m: 5.0
+  use_cache: true
+
+reconstruction:
+  device: "CPU:0"
+
+  # pipeline
+  use_dataset_cache: true
+  estimate_depth_confidences: true
+  optimize_depth_pose: true
+  use_fragment_dataset_cache: true
+  use_optimized_dataset_cache: true
+  use_colorless_vbg_cache: true
+  visualize_colorless_pcd: true
+  optimize_color_pose: true
+  visualize_colored_mesh: true
+  sample_point_cloud_from_colored_mesh: true
+  points_per_vertex_ratio: 2.0
+  render_color_aligned_depth: true
+
+  confidence_estimation:
+    target_frame_range: 10
+    depth_max: 4.0
+    error_threshold: 0.08
+    skip_if_output_dir_exists: true
+    use_multi_threading: true
+
+  fragment_generation:
+    fragment_size: 100
+    use_confidence_filtered_depth: true
+    confidence_threshold: 0.02
+    valid_count_threshold: 2
+    depth_max: 4.0
+    odometry_loop_interval: 10
+    overlap_ratio_threshold: 0.1
+    loop_yaw_info_density_threshold: 0.3
+    dist_threshold: 0.07
+    edge_prune_threshold: 0.25
+    use_multi_threading: false
+
+  fragment_pose_refinement:
+    use_confidence_filtered_depth: true
+    confidence_threshold: 0.02
+    valid_count_threshold: 2
+    voxel_size: 0.01          # Kept identical; you can change this independently if desired
+    block_resolution: 16
+    block_count: 50000
+    depth_max: 4.0
+    trunc_voxel_multiplier: 10.0
+    use_pre_filtering: true
+    pre_filter_every_k_points: 30
+    pre_filter_max_corr_dist: 0.1
+    pre_filter_inlier_rmse_threshold: 0.05
+    pre_filter_fitness_threshold: 0.2
+    icp_voxel_sizes: [0.05, 0.025, 0.0125]
+    max_corr_dists: [0.1, 0.05, 0.025]
+    max_iterations: [50, 31, 14]
+    relative_fitnesses: [1e-6, 1e-6, 1e-6]
+    relative_rmses: [1e-6, 1e-6, 1e-6]
+    icp_fitness_threshold: 0.2
+    icp_inlier_rmse_threshold: 0.05
+    dist_threshold: 0.07
+    edge_prune_threshold: 0.25
+    use_multi_threading: false
+
+  depth_integration:
+    use_confidence_filtered_depth: true
+    confidence_threshold: 0.02
+    valid_count_threshold: 2
+    voxel_size: 0.01          # Kept identical; comparison focuses on texturing-related changes
+    block_resolution: 16
+    block_count: 50000
+    depth_max: 4.0
+    trunc_voxel_multiplier: 10.0
+
+  color_optimization:
+    weight_threshold: 1.5
+    estimated_vertex_number: -1
+    interval: 30          # Use denser keyframes than 100 to reduce over-averaging while still multi-view
+    max_iteration: 100
+    use_dataset_cache: true
+    min_triangle_count: 500
+
+  color_aligned_depth_rendering:
+    weight_threshold: 1.5
+    estimated_vertex_number: -1
+    min_triangle_count: 500
+    only_use_optimized_dataset: true
+
+
