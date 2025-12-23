@@ -54,6 +54,10 @@ METRICS = {
     "yaw_range_rad": ("Yaw Range", "rad"),
     "pitch_range_rad": ("Pitch Range", "rad"),
     "roll_range_rad": ("Roll Range", "rad"),
+    "cumulative_vertical_rotation_rad": ("Cumulative Vertical Rotation (Pitch)", "rad"),
+    "cumulative_horizontal_rotation_rad": ("Cumulative Horizontal Rotation (Yaw)", "rad"),
+    "viewing_sphere_coverage_percent": ("Viewing Sphere Coverage", "%"),
+    "viewing_sphere_coverage_with_fov_percent": ("Viewing Sphere Coverage (with FOV)", "%"),
 }
 
 
@@ -74,6 +78,8 @@ def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
     """Perform statistical tests comparing Fog vs NoFog for each metric.
     
     Uses paired tests if participant information is available, otherwise uses independent samples tests.
+    For metrics with directional hypotheses (head movement, rotation, coverage), uses one-tailed tests
+    expecting fog > nofog.
     """
     results = []
     
@@ -86,7 +92,23 @@ def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
     fog_data = df[df["condition"] == "Fog"]
     nofog_data = df[df["condition"] == "NoFog"]
     
+    # Metrics where we expect fog > nofog (one-tailed tests)
+    # These represent metrics where fog condition should show better/more activity
+    improvement_metrics = [
+        "head_avg_angular_speed_rad_s",  # Average head angular speed
+        "head_cumulative_radians",  # Cumulative head rotation
+        "cumulative_vertical_rotation_rad",  # Cumulative vertical rotation (pitch)
+        "cumulative_horizontal_rotation_rad",  # Cumulative horizontal rotation (yaw)
+        "viewing_sphere_coverage_percent",  # Viewing sphere coverage
+        "viewing_sphere_coverage_with_fov_percent",  # Viewing sphere coverage with FOV
+    ]
+    
     for metric_col, (display_name, unit) in METRICS.items():
+        # Skip if metric column doesn't exist in the data (e.g., old CSV files)
+        if metric_col not in df.columns:
+            print(f"[warn] Skipping metric '{metric_col}' - not found in data (may need to recompute HMD stats)")
+            continue
+        
         fog_values = fog_data[metric_col].dropna()
         nofog_values = nofog_data[metric_col].dropna()
         
@@ -107,6 +129,7 @@ def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
         nofog_q75 = nofog_values.quantile(0.75)
         
         # Paired analysis if participants available
+        common_participants = []
         if has_participants:
             # Create paired dataset
             paired_df = df[["participant", "condition", metric_col]].dropna()
@@ -123,14 +146,28 @@ def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
                 # Test normality of differences
                 _, diff_normal = stats.shapiro(differences) if len(differences) <= 5000 else (None, 0.05)
                 
+                # Determine if one-tailed test is appropriate (for improvement metrics)
+                is_improvement_metric = metric_col in improvement_metrics
+                alternative = "greater" if is_improvement_metric else "two-sided"
+                
                 if diff_normal > 0.05:
                     # Paired t-test
-                    stat, p_value = stats.ttest_rel(fog_paired_vals, nofog_paired_vals)
-                    test_name = "Paired t-test"
+                    if is_improvement_metric:
+                        # One-tailed: test if fog > nofog
+                        stat, p_value_two_tailed = stats.ttest_rel(fog_paired_vals, nofog_paired_vals)
+                        # Convert to one-tailed p-value
+                        if stat > 0:  # Fog is greater
+                            p_value = p_value_two_tailed / 2.0
+                        else:  # Fog is not greater
+                            p_value = 1.0 - (p_value_two_tailed / 2.0)
+                        test_name = "Paired t-test (one-tailed: fog > nofog)"
+                    else:
+                        stat, p_value = stats.ttest_rel(fog_paired_vals, nofog_paired_vals)
+                        test_name = "Paired t-test"
                 else:
                     # Wilcoxon signed-rank test
-                    stat, p_value = stats.wilcoxon(fog_paired_vals, nofog_paired_vals, alternative="two-sided")
-                    test_name = "Wilcoxon signed-rank"
+                    stat, p_value = stats.wilcoxon(fog_paired_vals, nofog_paired_vals, alternative=alternative)
+                    test_name = f"Wilcoxon signed-rank ({alternative})" if is_improvement_metric else "Wilcoxon signed-rank"
                 
                 # Effect size for paired data (Cohen's d for paired samples)
                 diff_mean = differences.mean()
@@ -203,14 +240,21 @@ def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_box_plots(df: pd.DataFrame, output_dir: Path) -> None:
     """Create box plots comparing Fog vs NoFog for each metric using seaborn."""
-    n_metrics = len(METRICS)
+    # Count available metrics first
+    available_metrics = [(col, name) for col, name in METRICS.items() if col in df.columns]
+    
+    if len(available_metrics) == 0:
+        print("[warn] No metrics available for box plots")
+        return
+    
+    n_metrics = len(available_metrics)
     n_cols = 3
     n_rows = (n_metrics + n_cols - 1) // n_cols
     
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
     axes = axes.flatten() if n_metrics > 1 else [axes]
     
-    for idx, (metric_col, (display_name, unit)) in enumerate(METRICS.items()):
+    for idx, (metric_col, (display_name, unit)) in enumerate(available_metrics):
         ax = axes[idx]
         
         plot_df = df[[metric_col, "condition"]].dropna()
@@ -220,9 +264,12 @@ def create_box_plots(df: pd.DataFrame, output_dir: Path) -> None:
             data=plot_df,
             x="condition",
             y=metric_col,
+            hue="condition",        # avoid seaborn palette warning
+            dodge=False,
             ax=ax,
             palette="colorblind",
             showmeans=True,
+            legend=False,
         )
         
         ax.set_ylabel(f"{display_name} ({unit})")
@@ -240,14 +287,21 @@ def create_box_plots(df: pd.DataFrame, output_dir: Path) -> None:
 
 def create_violin_plots(df: pd.DataFrame, output_dir: Path) -> None:
     """Create violin plots comparing Fog vs NoFog for each metric using seaborn."""
-    n_metrics = len(METRICS)
+    # Count available metrics first
+    available_metrics = [(col, name) for col, name in METRICS.items() if col in df.columns]
+    
+    if len(available_metrics) == 0:
+        print("[warn] No metrics available for violin plots")
+        return
+    
+    n_metrics = len(available_metrics)
     n_cols = 3
     n_rows = (n_metrics + n_cols - 1) // n_cols
     
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
     axes = axes.flatten() if n_metrics > 1 else [axes]
     
-    for idx, (metric_col, (display_name, unit)) in enumerate(METRICS.items()):
+    for idx, (metric_col, (display_name, unit)) in enumerate(available_metrics):
         ax = axes[idx]
         
         plot_df = df[[metric_col, "condition"]].dropna()
@@ -257,9 +311,12 @@ def create_violin_plots(df: pd.DataFrame, output_dir: Path) -> None:
             data=plot_df,
             x="condition",
             y=metric_col,
+            hue="condition",        # avoid seaborn palette warning
+            dodge=False,
             ax=ax,
             palette="colorblind",
             inner="quart",  # Show quartiles inside
+            legend=False,
         )
         
         ax.set_ylabel(f"{display_name} ({unit})")
@@ -281,20 +338,30 @@ def create_paired_plots(df: pd.DataFrame, output_dir: Path) -> None:
         print("[warn] No participant information available - skipping paired plots")
         return
     
-    # Select key metrics for paired visualization
+    # Select key metrics for paired visualization (filter to those that exist)
     key_metrics = [
         "body_distance_m",
         "body_avg_speed_kmh",
         "head_cumulative_radians",
         "head_avg_angular_speed_rad_s",
+        "cumulative_vertical_rotation_rad",
+        "cumulative_horizontal_rotation_rad",
+        "viewing_sphere_coverage_with_fov_percent",
     ]
     
-    n_metrics = len(key_metrics)
+    # Filter to metrics that exist in the data
+    available_key_metrics = [m for m in key_metrics if m in df.columns]
+    
+    if len(available_key_metrics) == 0:
+        print("[warn] No key metrics available for paired plots")
+        return
+    
+    n_metrics = len(available_key_metrics)
     fig, axes = plt.subplots(1, n_metrics, figsize=(5 * n_metrics, 6))
     if n_metrics == 1:
         axes = [axes]
     
-    for idx, metric_col in enumerate(key_metrics):
+    for idx, metric_col in enumerate(available_key_metrics):
         ax = axes[idx]
         metric_name = METRICS[metric_col][0]
         unit = METRICS[metric_col][1]
@@ -341,6 +408,170 @@ def create_paired_plots(df: pd.DataFrame, output_dir: Path) -> None:
     plt.close()
 
 
+def analyze_improvements(df: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
+    """
+    Analyze improvements (fog - nofog) for each participant.
+    Focuses on coverage metrics where fog is expected to be better.
+    """
+    if "participant" not in df.columns or df["participant"].isna().all():
+        print("[warn] No participant information - skipping improvement analysis")
+        return pd.DataFrame()
+    
+    # Metrics where we expect fog > nofog (one-tailed tests)
+    improvement_metrics = [
+        "head_avg_angular_speed_rad_s",  # Average head angular speed
+        "head_cumulative_radians",  # Cumulative head rotation
+        "cumulative_vertical_rotation_rad",  # Cumulative vertical rotation (pitch)
+        "cumulative_horizontal_rotation_rad",  # Cumulative horizontal rotation (yaw)
+        "viewing_sphere_coverage_percent",  # Viewing sphere coverage
+        "viewing_sphere_coverage_with_fov_percent",  # Viewing sphere coverage with FOV
+    ]
+    
+    # Filter to metrics that exist
+    available_metrics = [m for m in improvement_metrics if m in df.columns]
+    
+    if len(available_metrics) == 0:
+        print("[warn] No improvement metrics available")
+        return pd.DataFrame()
+    
+    improvements = []
+    
+    for metric_col in available_metrics:
+        display_name = METRICS[metric_col][0]
+        unit = METRICS[metric_col][1]
+        
+        # Create paired dataset
+        paired_df = df[["participant", "condition", metric_col]].dropna()
+        fog_data = paired_df[paired_df["condition"] == "Fog"].set_index("participant")[metric_col]
+        nofog_data = paired_df[paired_df["condition"] == "NoFog"].set_index("participant")[metric_col]
+        
+        # Get common participants
+        common_participants = fog_data.index.intersection(nofog_data.index)
+        if len(common_participants) < 2:
+            continue
+        
+        fog_vals = fog_data[common_participants].values
+        nofog_vals = nofog_data[common_participants].values
+        differences = fog_vals - nofog_vals
+        
+        # Statistical test: is mean improvement significantly > 0?
+        _, diff_normal = stats.shapiro(differences) if len(differences) <= 5000 else (None, 0.05)
+        
+        if diff_normal > 0.05:
+            # One-sample t-test: test if mean difference > 0
+            stat, p_value_two_tailed = stats.ttest_1samp(differences, 0.0)
+            if stat > 0:  # Mean is positive
+                p_value = p_value_two_tailed / 2.0
+            else:
+                p_value = 1.0 - (p_value_two_tailed / 2.0)
+            test_name = "One-sample t-test (one-tailed: improvement > 0)"
+        else:
+            # Wilcoxon signed-rank test: test if median > 0
+            stat, p_value = stats.wilcoxon(differences, alternative="greater")
+            test_name = "Wilcoxon signed-rank (one-tailed: improvement > 0)"
+        
+        # Effect size (Cohen's d for one-sample)
+        diff_mean = differences.mean()
+        diff_std = differences.std()
+        cohens_d = diff_mean / diff_std if diff_std > 0 else 0.0
+        
+        # Effect size interpretation
+        if abs(cohens_d) < 0.2:
+            effect_size = "negligible"
+        elif abs(cohens_d) < 0.5:
+            effect_size = "small"
+        elif abs(cohens_d) < 0.8:
+            effect_size = "medium"
+        else:
+            effect_size = "large"
+        
+        improvements.append({
+            "metric": display_name,
+            "unit": unit,
+            "n_participants": len(common_participants),
+            "mean_improvement": diff_mean,
+            "std_improvement": diff_std,
+            "median_improvement": float(np.median(differences)),
+            "min_improvement": float(np.min(differences)),
+            "max_improvement": float(np.max(differences)),
+            "improvement_percent": (diff_mean / abs(nofog_vals.mean()) * 100) if abs(nofog_vals.mean()) > 1e-10 else 0.0,
+            "test": test_name,
+            "statistic": stat,
+            "p_value": p_value,
+            "significant": p_value < 0.05,
+            "cohens_d": cohens_d,
+            "effect_size": effect_size,
+        })
+        
+        # Create improvement plot for this metric
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        x_pos = np.arange(len(common_participants))
+        colors = ['green' if d > 0 else 'red' for d in differences]
+        
+        bars = ax.barh(x_pos, differences, color=colors, alpha=0.7, edgecolor='black')
+        
+        # Add zero line
+        ax.axvline(x=0, color='black', linestyle='--', linewidth=1)
+        
+        # Add mean improvement line
+        ax.axvline(x=diff_mean, color='blue', linestyle='-', linewidth=2, 
+                  label=f'Mean improvement: {diff_mean:.2f} {unit}')
+        
+        ax.set_yticks(x_pos)
+        ax.set_yticklabels([p[:15] + "..." if len(p) > 15 else p for p in common_participants])
+        ax.set_xlabel(f"Improvement ({unit})\n(Fog - NoFog)")
+        ax.set_title(f"{display_name}\nIndividual Participant Improvements\n"
+                    f"Mean: {diff_mean:.2f} {unit}, p={p_value:.4f} {'***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'}")
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis='x')
+        
+        # Add value labels on bars
+        for i, (bar, val) in enumerate(zip(bars, differences)):
+            ax.text(val + (0.01 * max(differences)) if val >= 0 else val - (0.01 * max(differences)),
+                   i, f'{val:.2f}', va='center',
+                   ha='left' if val >= 0 else 'right', fontsize=9)
+        
+        plt.tight_layout()
+        safe_name = display_name.replace(" ", "_").replace("(", "").replace(")", "").replace("/", "_")
+        plt.savefig(output_dir / f"improvements_{safe_name}.png")
+        plt.close()
+    
+    # Create summary improvement plot if we have multiple metrics
+    if len(improvements) > 1:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        metrics = [row["metric"] for row in improvements]
+        mean_improvements = [row["mean_improvement"] for row in improvements]
+        std_improvements = [row["std_improvement"] for row in improvements]
+        p_values = [row["p_value"] for row in improvements]
+        
+        x_pos = np.arange(len(metrics))
+        colors = ['green' if p < 0.05 else 'orange' if p < 0.10 else 'gray' for p in p_values]
+        
+        bars = ax.barh(x_pos, mean_improvements, xerr=std_improvements, 
+                      color=colors, alpha=0.7, edgecolor='black', capsize=5)
+        
+        ax.axvline(x=0, color='black', linestyle='--', linewidth=1)
+        ax.set_yticks(x_pos)
+        ax.set_yticklabels(metrics)
+        ax.set_xlabel("Mean Improvement (Fog - NoFog)")
+        ax.set_title("Summary of Improvements Across Coverage Metrics")
+        ax.grid(True, alpha=0.3, axis='x')
+        
+        # Add significance indicators
+        for i, (bar, p_val, mean_imp) in enumerate(zip(bars, p_values, mean_improvements)):
+            sig_text = '***' if p_val < 0.001 else '**' if p_val < 0.01 else '*' if p_val < 0.05 else 'ns'
+            ax.text(mean_imp + std_improvements[i] + 0.01 * max(mean_improvements),
+                   i, sig_text, va='center', fontsize=12, fontweight='bold')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / "improvements_summary.png")
+        plt.close()
+    
+    return pd.DataFrame(improvements)
+
+
 def create_summary_bar_chart(stats_df: pd.DataFrame, output_dir: Path) -> None:
     """Create bar chart with error bars showing mean ± SD for key metrics."""
     key_metrics = [
@@ -348,14 +579,28 @@ def create_summary_bar_chart(stats_df: pd.DataFrame, output_dir: Path) -> None:
         "body_avg_speed_kmh",
         "head_cumulative_radians",
         "head_avg_angular_speed_rad_s",
+        "cumulative_vertical_rotation_rad",
+        "cumulative_horizontal_rotation_rad",
+        "viewing_sphere_coverage_with_fov_percent",
     ]
     
-    n_metrics = len(key_metrics)
+    # Filter to metrics that exist in stats_df
+    available_metrics = []
+    for metric_col in key_metrics:
+        metric_name = METRICS[metric_col][0]
+        if len(stats_df[stats_df["metric"] == metric_name]) > 0:
+            available_metrics.append(metric_col)
+    
+    if len(available_metrics) == 0:
+        print("[warn] No key metrics available for summary bar chart")
+        return
+    
+    n_metrics = len(available_metrics)
     fig, axes = plt.subplots(1, n_metrics, figsize=(5 * n_metrics, 5))
     if n_metrics == 1:
         axes = [axes]
     
-    for idx, metric_col in enumerate(key_metrics):
+    for idx, metric_col in enumerate(available_metrics):
         ax = axes[idx]
         metric_name = METRICS[metric_col][0]
         unit = METRICS[metric_col][1]
@@ -391,7 +636,7 @@ def create_summary_bar_chart(stats_df: pd.DataFrame, output_dir: Path) -> None:
     plt.close()
 
 
-def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, output_dir: Path) -> None:
+def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, improvements_df: pd.DataFrame, output_dir: Path) -> None:
     """Generate a comprehensive text report with statistical interpretation."""
     report_path = output_dir / "statistical_report.txt"
     
@@ -453,6 +698,39 @@ def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, output_dir: Path) 
                        f"Cohen's d={row['cohens_d']:.3f} ({row['effect_size']})\n")
             f.write("\n")
         
+        # Improvement analysis section
+        if len(improvements_df) > 0:
+            f.write("=" * 80 + "\n")
+            f.write("IMPROVEMENT ANALYSIS (Fog - NoFog)\n")
+            f.write("=" * 80 + "\n\n")
+            f.write("This section tests directional hypotheses that Fog > NoFog for:\n")
+            f.write("  • Average head angular speed (more head movement)\n")
+            f.write("  • Cumulative head rotation (more total rotation)\n")
+            f.write("  • Cumulative vertical/horizontal rotation (more structured scanning)\n")
+            f.write("  • Viewing sphere coverage (better exploration)\n\n")
+            f.write("One-tailed tests are used to test if improvements are significantly > 0.\n\n")
+            
+            for _, row in improvements_df.iterrows():
+                f.write(f"{row['metric']} ({row['unit']}):\n")
+                f.write(f"  Mean improvement: {row['mean_improvement']:.3f} {row['unit']}\n")
+                f.write(f"  Improvement percentage: {row['improvement_percent']:.1f}% relative to NoFog\n")
+                f.write(f"  Range: [{row['min_improvement']:.3f}, {row['max_improvement']:.3f}] {row['unit']}\n")
+                f.write(f"  Median: {row['median_improvement']:.3f} {row['unit']}\n")
+                f.write(f"  Test: {row['test']}\n")
+                f.write(f"  Statistic: {row['statistic']:.3f}, p={row['p_value']:.4f}")
+                if row['significant']:
+                    f.write(" *** SIGNIFICANT ***\n")
+                else:
+                    f.write(" (not significant)\n")
+                f.write(f"  Effect size: Cohen's d={row['cohens_d']:.3f} ({row['effect_size']})\n")
+                
+                if row['significant']:
+                    f.write(f"  ✓ Fog condition shows significant improvement over NoFog\n")
+                    f.write(f"    ({row['n_participants']} participants, mean improvement: {row['mean_improvement']:.2f} {row['unit']})\n")
+                else:
+                    f.write(f"  ✗ No significant improvement detected\n")
+                f.write("\n")
+        
         f.write("=" * 80 + "\n")
         f.write("INTERPRETATION SUMMARY\n")
         f.write("=" * 80 + "\n\n")
@@ -492,12 +770,18 @@ def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, output_dir: Path) 
             f.write("  • Paired design: Shapiro-Wilk test on differences\n")
             f.write("  • Normal differences: Paired t-test\n")
             f.write("  • Non-normal differences: Wilcoxon signed-rank test\n")
+            f.write("  • One-tailed tests (fog > nofog) for metrics with directional hypotheses:\n")
+            f.write("    - Average head angular speed\n")
+            f.write("    - Cumulative head rotation\n")
+            f.write("    - Cumulative vertical/horizontal rotation\n")
+            f.write("    - Viewing sphere coverage\n")
         else:
             f.write("  • Independent samples: Shapiro-Wilk test used to assess normality\n")
             f.write("  • Normal distributions: Independent samples t-test\n")
             f.write("  • Non-normal distributions: Mann-Whitney U test\n")
         f.write("  • Effect sizes calculated using Cohen's d\n")
         f.write("  • Significance threshold: α = 0.05\n")
+        f.write("  • Improvement analysis uses one-tailed tests to test if improvements > 0\n")
     
     print(f"[info] Report written to: {report_path}")
 
@@ -552,9 +836,20 @@ def main():
     create_paired_plots(df, args.output_dir)
     print("[info] Created paired participant plots")
     
+    # Analyze improvements (fog - nofog)
+    print("[info] Analyzing improvements (Fog - NoFog)...")
+    improvements_df = analyze_improvements(df, args.output_dir)
+    if len(improvements_df) > 0:
+        improvements_csv_path = args.output_dir / "improvement_analysis.csv"
+        improvements_df.to_csv(improvements_csv_path, index=False)
+        print(f"[info] Improvement analysis saved to: {improvements_csv_path}")
+        print("[info] Created improvement visualizations")
+    else:
+        print("[warn] No improvement analysis performed (missing participant info or metrics)")
+    
     # Generate report
     print("[info] Generating statistical report...")
-    generate_report(stats_df, df, args.output_dir)
+    generate_report(stats_df, df, improvements_df, args.output_dir)
     
     print(f"\n[info] Analysis complete! Results saved to: {args.output_dir}")
 

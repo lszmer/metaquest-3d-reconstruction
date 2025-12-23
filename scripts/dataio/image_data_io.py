@@ -118,6 +118,18 @@ class ImageDataIO:
     def load_camera_characteristics(self, side: Side) -> CameraCharacteristics:
         characteristics_json_path = self.image_path_config.get_camera_characteristic_json_path(side)
 
+        if not characteristics_json_path.exists():
+            # Fallback: reuse the opposite side characteristics if available instead of failing hard.
+            fallback_side = Side.LEFT if side == Side.RIGHT else Side.RIGHT
+            fallback_path = self.image_path_config.get_camera_characteristic_json_path(fallback_side)
+            if fallback_path.exists():
+                print(f"[Warning] Camera characteristics for {side.name} not found at {characteristics_json_path}. "
+                      f"Using {fallback_side.name} camera characteristics from {fallback_path} as a fallback.")
+                characteristics_json_path = fallback_path
+            else:
+                raise FileNotFoundError(f"Camera characteristics JSON not found for {side.name} at {characteristics_json_path} "
+                                        f"and fallback {fallback_path} is also missing.")
+
         with open(characteristics_json_path, "r", encoding="utf-8") as f:
             camera_characteristics = json.load(f)
 

@@ -14,6 +14,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterable, List, Sequence
@@ -455,26 +456,61 @@ def compute_inter_hand_stats(
 
 
 def load_participant_mapping(master_report_csv: Path | None) -> dict[str, tuple[str, str]]:
-    """Load participant and condition mapping from master report CSV."""
+    """Load participant and condition mapping from master report CSV (wide or legacy)."""
     if master_report_csv is None or not master_report_csv.exists():
         return {}
     
     try:
         df = pd.read_csv(master_report_csv)
-        if "session_dir" not in df.columns or "participant" not in df.columns or "condition" not in df.columns:
-            return {}
-        
-        mapping = {}
+        mapping: dict[str, tuple[str, str]] = {}
+
+        # Legacy stacked schema
+        if {"session_dir", "participant", "condition"}.issubset(df.columns):
+            for _, row in df.iterrows():
+                session_dir = str(row["session_dir"])
+                participant = str(row["participant"])
+                condition = str(row["condition"])
+                mapping[session_dir] = (participant, condition)
+            return mapping
+
+        # Symmetric schema: prefixed session_dir columns per condition
         for _, row in df.iterrows():
-            session_dir = str(row["session_dir"])
-            participant = str(row["participant"])
-            condition = str(row["condition"])
-            mapping[session_dir] = (participant, condition)
-        
+            participant = str(row.get("participant", "")).strip()
+            for condition, prefix in (("NoFog", "nofog"), ("Fog", "fog")):
+                session_dir_val = row.get(f"{prefix}_session_dir")
+                if session_dir_val is None:
+                    continue
+                if isinstance(session_dir_val, float) and math.isnan(session_dir_val):
+                    continue
+                session_dir = str(session_dir_val).strip()
+                if session_dir:
+                    mapping[session_dir] = (participant, condition)
         return mapping
     except Exception as e:
         print(f"[warn] Could not load participant mapping: {e}")
         return {}
+
+
+def _extract_session_dirs(df: pd.DataFrame) -> list[Path]:
+    """Gather unique session directories from symmetric or legacy schema."""
+    columns: list[str] = []
+    if "session_dir" in df.columns:
+        columns.append("session_dir")
+    for prefix in ("nofog", "fog"):
+        col = f"{prefix}_session_dir"
+        if col in df.columns:
+            columns.append(col)
+
+    session_dirs: list[Path] = []
+    seen: set[str] = set()
+    for col in columns:
+        for val in df[col].dropna():
+            path_str = str(val).strip()
+            if not path_str or path_str in seen:
+                continue
+            seen.add(path_str)
+            session_dirs.append(Path(path_str))
+    return session_dirs
 
 
 def read_session_dirs(master_report_csv: Path) -> list[Path]:
@@ -483,18 +519,18 @@ def read_session_dirs(master_report_csv: Path) -> list[Path]:
         raise FileNotFoundError(f"Master report CSV not found: {master_report_csv}")
     
     df = pd.read_csv(master_report_csv)
-    if "session_dir" not in df.columns:
-        raise ValueError(f"Master report CSV missing 'session_dir' column: {master_report_csv}")
+    session_dirs = _extract_session_dirs(df)
+    if not session_dirs:
+        raise ValueError(f"Master report CSV missing session_dir columns: {master_report_csv}")
     
-    session_dirs = []
-    for session_dir_str in df["session_dir"].dropna():
-        session_path = Path(session_dir_str)
+    existing_dirs: list[Path] = []
+    for session_path in session_dirs:
         if session_path.exists():
-            session_dirs.append(session_path)
+            existing_dirs.append(session_path)
         else:
             print(f"[warn] Skipping missing session_dir: {session_path}")
     
-    return session_dirs
+    return existing_dirs
 
 
 def write_summary_csv(

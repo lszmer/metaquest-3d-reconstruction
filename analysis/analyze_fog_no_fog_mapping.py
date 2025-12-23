@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-Build a consolidated fog/no_fog experiment report.
+Build a consolidated, symmetric fog/no_fog experiment report.
 
 - Reads the mapping CSV (Name, NoFog, Fog).
 - Matches sessions to `/Volumes/Intenso/{NoFog,Fog}/<session>`.
-- Extracts the best-available reconstruction completion timestamp.
-- Captures total/adjusted runtimes (if present in pipeline_runtime.txt).
-- Adds placeholders for `evaluate_fbx_mesh` output and notes mesh presence.
-- Writes a flat CSV (and optional XLSX) for downstream analysis.
+- Extracts reconstruction completion timestamps and pipeline runtimes (if present in pipeline_runtime.txt).
+- Adds mesh presence and evaluation placeholders.
+- Writes a *symmetric* per-participant CSV/XLSX with parallel NoFog/Fog columns.
 """
 
 import argparse
 import csv
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Defaults are absolute to avoid ambiguity.
 DEFAULT_MAPPING = Path(
@@ -23,12 +22,9 @@ DEFAULT_MAPPING = Path(
 DEFAULT_ROOT = Path("/Volumes/Intenso")
 DEFAULT_OUTPUT = Path(__file__).resolve().parent / "master_fog_no_fog_report.csv"
 
-FIELDNAMES = [
-    "participant",
-    "condition",
+CONDITION_PREFIXES = {"NoFog": "nofog", "Fog": "fog"}
+CONDITION_FIELDS = [
     "session_id",
-    "paired_session_id",
-    "paired_condition",
     "session_dir",
     "session_dir_exists",
     "pipeline_runtime_path",
@@ -47,6 +43,15 @@ FIELDNAMES = [
     "evaluate_quality_score_placeholder",
     "notes",
 ]
+
+FIELDNAMES = (
+    ["participant", "pair_id", "pair_complete"]
+    + [
+        f"{prefix}_{field}"
+        for condition, prefix in CONDITION_PREFIXES.items()
+        for field in CONDITION_FIELDS
+    ]
+)
 
 
 def read_mapping(csv_path: Path) -> List[Dict[str, str]]:
@@ -139,64 +144,77 @@ def find_completion_timestamp(session_dir: Path) -> Tuple[Optional[str], str, Di
     return completion_iso, f"mtime:{label}", runtime_info, label
 
 
-def build_rows(mapping_rows: List[Dict[str, str]], root_dir: Path) -> List[Dict[str, str]]:
-    rows: List[Dict[str, str]] = []
-    
+def _build_condition_record(
+    participant: str, condition: str, session_id: str, root_dir: Path
+) -> Dict[str, Any]:
+    """Collect per-condition fields and prefix them for symmetry."""
+    prefix = CONDITION_PREFIXES[condition]
+    session_dir = root_dir / condition / session_id
+    exists = session_dir.exists()
+
+    completion_ts, completion_source, runtime_info, fallback_label = (None, "", {}, None)
+    if exists:
+        completion_ts, completion_source, runtime_info, fallback_label = find_completion_timestamp(session_dir)
+
+    runtime_path = session_dir / "pipeline_runtime.txt"
+    color_mesh_fbx = session_dir / "reconstruction" / "color_mesh.fbx"
+    color_mesh_ply = session_dir / "reconstruction" / "color_mesh.ply"
+    color_mesh_present = color_mesh_fbx.exists() or color_mesh_ply.exists()
+
+    eval_cmd = ""
+    if color_mesh_fbx.exists():
+        eval_cmd = f"python scripts/evaluate_fbx_mesh.py \"{color_mesh_fbx}\""
+    elif color_mesh_ply.exists():
+        eval_cmd = f"python scripts/evaluate_fbx_mesh.py \"{color_mesh_ply}\""
+
+    return {
+        f"{prefix}_session_id": session_id,
+        f"{prefix}_session_dir": str(session_dir),
+        f"{prefix}_session_dir_exists": exists,
+        f"{prefix}_pipeline_runtime_path": str(runtime_path) if runtime_path.exists() else "",
+        f"{prefix}_completion_time_utc": completion_ts or "",
+        f"{prefix}_completion_time_source": completion_source,
+        f"{prefix}_completion_fallback_artifact": fallback_label or "",
+        f"{prefix}_runtime_total_seconds": runtime_info.get("runtime_total_seconds") or "",
+        f"{prefix}_runtime_adjusted_seconds": runtime_info.get("runtime_adjusted_seconds") or "",
+        f"{prefix}_runtime_secs_per_capture": runtime_info.get("runtime_secs_per_capture") or "",
+        f"{prefix}_runtime_source": runtime_info.get("runtime_source") or "",
+        f"{prefix}_color_mesh_fbx_path": str(color_mesh_fbx) if color_mesh_fbx.exists() else "",
+        f"{prefix}_color_mesh_ply_path": str(color_mesh_ply) if color_mesh_ply.exists() else "",
+        f"{prefix}_color_mesh_present": color_mesh_present,
+        f"{prefix}_evaluate_fbx_mesh_command_placeholder": eval_cmd,
+        f"{prefix}_evaluate_report_path_placeholder": "",
+        f"{prefix}_evaluate_quality_score_placeholder": "",
+        f"{prefix}_notes": "",
+    }
+
+
+def build_rows(mapping_rows: List[Dict[str, str]], root_dir: Path) -> List[Dict[str, Any]]:
+    """Return symmetric per-participant rows with parallel NoFog/Fog fields."""
+    rows: List[Dict[str, Any]] = []
+
     for entry in mapping_rows:
         participant = entry["Name"].strip()
         sessions = {"NoFog": entry["NoFog"].strip(), "Fog": entry["Fog"].strip()}
+        participant_row: Dict[str, Any] = {
+            "participant": participant,
+            "pair_id": f"{sessions['NoFog']}__{sessions['Fog']}",
+        }
+
         for condition, session_id in sessions.items():
-            paired_condition = "Fog" if condition == "NoFog" else "NoFog"
-            paired_session_id = sessions[paired_condition]
-            session_dir = root_dir / condition / session_id
-            exists = session_dir.exists()
-            
-            completion_ts, completion_source, runtime_info, fallback_label = (None, "", {}, None)
-            if exists:
-                completion_ts, completion_source, runtime_info, fallback_label = find_completion_timestamp(session_dir)
-            
-            runtime_path = session_dir / "pipeline_runtime.txt"
-            color_mesh_fbx = session_dir / "reconstruction" / "color_mesh.fbx"
-            color_mesh_ply = session_dir / "reconstruction" / "color_mesh.ply"
-            color_mesh_present = color_mesh_fbx.exists() or color_mesh_ply.exists()
-            
-            eval_cmd = ""
-            if color_mesh_fbx.exists():
-                eval_cmd = f"python scripts/evaluate_fbx_mesh.py \"{color_mesh_fbx}\""
-            elif color_mesh_ply.exists():
-                eval_cmd = f"python scripts/evaluate_fbx_mesh.py \"{color_mesh_ply}\""
-            
-            rows.append(
-                {
-                    "participant": participant,
-                    "condition": condition,
-                    "session_id": session_id,
-                    "paired_session_id": paired_session_id,
-                    "paired_condition": paired_condition,
-                    "session_dir": str(session_dir),
-                    "session_dir_exists": str(exists),
-                    "pipeline_runtime_path": str(runtime_path) if runtime_path.exists() else "",
-                    "completion_time_utc": completion_ts or "",
-                    "completion_time_source": completion_source,
-                    "completion_fallback_artifact": fallback_label or "",
-                    "runtime_total_seconds": runtime_info.get("runtime_total_seconds") or "",
-                    "runtime_adjusted_seconds": runtime_info.get("runtime_adjusted_seconds") or "",
-                    "runtime_secs_per_capture": runtime_info.get("runtime_secs_per_capture") or "",
-                    "runtime_source": runtime_info.get("runtime_source") or "",
-                    "color_mesh_fbx_path": str(color_mesh_fbx) if color_mesh_fbx.exists() else "",
-                    "color_mesh_ply_path": str(color_mesh_ply) if color_mesh_ply.exists() else "",
-                    "color_mesh_present": str(color_mesh_present),
-                    "evaluate_fbx_mesh_command_placeholder": eval_cmd,
-                    "evaluate_report_path_placeholder": "",
-                    "evaluate_quality_score_placeholder": "",
-                    "notes": "",
-                }
-            )
-    
+            participant_row |= _build_condition_record(participant, condition, session_id, root_dir)
+
+        # Mark whether both sessions exist on disk
+        nofog_exists = bool(participant_row.get("nofog_session_dir_exists"))
+        fog_exists = bool(participant_row.get("fog_session_dir_exists"))
+        participant_row["pair_complete"] = nofog_exists and fog_exists
+
+        rows.append(participant_row)
+
     return rows
 
 
-def write_csv(rows: List[Dict[str, str]], output_path: Path) -> None:
+def write_csv(rows: List[Dict[str, Any]], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
@@ -205,7 +223,7 @@ def write_csv(rows: List[Dict[str, str]], output_path: Path) -> None:
     print(f"[Info] Wrote CSV: {output_path} ({len(rows)} rows)")
 
 
-def maybe_write_excel(rows: List[Dict[str, str]], xlsx_path: Optional[Path]) -> None:
+def maybe_write_excel(rows: List[Dict[str, Any]], xlsx_path: Optional[Path]) -> None:
     if xlsx_path is None:
         return
     try:
@@ -214,7 +232,10 @@ def maybe_write_excel(rows: List[Dict[str, str]], xlsx_path: Optional[Path]) -> 
         print("[Warning] pandas not installed; skipping Excel output.")
         return
     xlsx_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_excel(xlsx_path, index=False)
+    df = pd.DataFrame(rows)
+    # Enforce column order for symmetry
+    df = df[[c for c in FIELDNAMES if c in df.columns]]
+    df.to_excel(xlsx_path, index=False)
     print(f"[Info] Wrote Excel: {xlsx_path} ({len(rows)} rows)")
 
 
@@ -238,11 +259,18 @@ def main():
     write_csv(rows, args.output)
     maybe_write_excel(rows, args.xlsx_output)
     
-    missing = [row for row in rows if row["session_dir_exists"] == "False"]
-    if missing:
-        print(f"[Warning] {len(missing)} session(s) listed in mapping were not found under {args.root}.")
-        for row in missing:
-            print(f"  - {row['condition']} missing: {row['session_dir']}")
+    missing_entries = []
+    for row in rows:
+        for condition, prefix in CONDITION_PREFIXES.items():
+            exists = row.get(f"{prefix}_session_dir_exists")
+            # exists stored as bool in new schema
+            if exists is False:
+                missing_entries.append((condition, row.get(f"{prefix}_session_dir", "")))
+
+    if missing_entries:
+        print(f"[Warning] {len(missing_entries)} session(s) listed in mapping were not found under {args.root}.")
+        for condition, session_dir in missing_entries:
+            print(f"  - {condition} missing: {session_dir}")
     else:
         print("[Info] All mapped sessions were found on disk.")
 

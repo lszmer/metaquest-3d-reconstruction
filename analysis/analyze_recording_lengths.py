@@ -164,15 +164,24 @@ def analyze_session(session_dir: Path) -> dict[str, str]:
 def read_session_dirs(report_csv: Path) -> list[Path]:
     with report_csv.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        dirs = [Path(row["session_dir"]) for row in reader if "session_dir" in row]
-    # Deduplicate while preserving order
-    seen = set()
-    unique_dirs: list[Path] = []
-    for d in dirs:
-        if d not in seen:
-            seen.add(d)
-            unique_dirs.append(d)
-    return unique_dirs
+        fieldnames = reader.fieldnames or []
+        candidate_cols = [c for c in fieldnames if c and c.endswith("_session_dir")]
+        if "session_dir" in fieldnames:
+            candidate_cols.insert(0, "session_dir")
+
+        dirs: list[Path] = []
+        seen: set[str] = set()
+        for row in reader:
+            for col in candidate_cols:
+                raw_val = row.get(col, "")
+                if raw_val is None:
+                    continue
+                path_str = str(raw_val).strip()
+                if not path_str or path_str in seen:
+                    continue
+                seen.add(path_str)
+                dirs.append(Path(path_str))
+    return dirs
 
 
 def write_report(rows: list[dict[str, str]], output_csv: Path) -> None:

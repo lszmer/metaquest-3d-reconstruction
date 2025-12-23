@@ -42,6 +42,11 @@ from typing import Dict, List, Tuple, Iterable, Optional, Any
 
 import numpy as np
 import open3d as o3d
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import io
+import base64
 
 try:
     from .mesh_loader import load_mesh
@@ -70,9 +75,9 @@ def compute_angle(v1: np.ndarray, v2: np.ndarray) -> float:
 def triangle_aspect_ratio(v0: np.ndarray, v1: np.ndarray, v2: np.ndarray) -> float:
     """Compute triangle aspect ratio: longest edge / shortest edge."""
     edges = [
-        np.linalg.norm(v1 - v0),
-        np.linalg.norm(v2 - v1),
-        np.linalg.norm(v0 - v2),
+        float(np.linalg.norm(v1 - v0)),
+        float(np.linalg.norm(v2 - v1)),
+        float(np.linalg.norm(v0 - v2)),
     ]
     min_e = max(min(edges), 1e-12)
     return float(max(edges) / min_e)
@@ -123,6 +128,14 @@ def min_max_normalize(values: np.ndarray) -> np.ndarray:
     if np.isclose(v_min, v_max):
         return np.full_like(values, 0.5, dtype=float)
     return (values - v_min) / (v_max - v_min)
+
+
+def _fig_to_base64(fig) -> str:
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("ascii")
 
 
 # -----------------------------------------------------------------------------
@@ -715,6 +728,108 @@ def print_pair_summaries(pairs: List[Tuple[QualityScores, QualityScores]]) -> No
         )
 
 
+def write_pairwise_reports(
+    scores: List[QualityScores],
+    pair_indices: List[Tuple[int, int]],
+    pair_meta: List[Dict[str, str]],
+    out_dir: Path,
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    summary_csv = out_dir / "pairwise_summary.csv"
+    rows = []
+    labels = []
+    fog_vals = []
+    nofog_vals = []
+    deltas = []
+
+    for i, (fog_idx, nofog_idx) in enumerate(pair_indices):
+        fog_s = scores[fog_idx]
+        nofog_s = scores[nofog_idx]
+        meta = pair_meta[i] if i < len(pair_meta) else {
+            "participant": f"pair{i+1}",
+            "pair_id": f"pair{i+1}",
+            "fog_name": fog_s.name,
+            "nofog_name": nofog_s.name,
+        }
+        delta = nofog_s.Q_norm - fog_s.Q_norm
+
+        rows.append([
+            meta.get("participant", ""),
+            meta.get("pair_id", ""),
+            fog_s.name,
+            f"{fog_s.Q_norm:.6f}",
+            nofog_s.name,
+            f"{nofog_s.Q_norm:.6f}",
+            f"{delta:.6f}",
+        ])
+        labels.append(meta.get("participant") or meta.get("pair_id") or f"pair{i+1}")
+        fog_vals.append(fog_s.Q_norm)
+        nofog_vals.append(nofog_s.Q_norm)
+        deltas.append(delta)
+
+    with summary_csv.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["participant", "pair_id", "fog_name", "fog_Q_norm", "nofog_name", "nofog_Q_norm", "delta_nofog_minus_fog"])
+        writer.writerows(rows)
+    print(f"[Info] Wrote pairwise summary CSV: {summary_csv}")
+
+    pngs: Dict[str, str] = {}
+
+    # Bar chart per pair
+    fig, ax = plt.subplots(figsize=(10, 5))
+    x = np.arange(len(labels))
+    ax.bar(x - 0.2, fog_vals, width=0.4, label="Fog")
+    ax.bar(x + 0.2, nofog_vals, width=0.4, label="NoFog")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_ylabel("Q_norm")
+    ax.set_title("Quality scores per pair (normalized)")
+    ax.legend()
+    pngs["Per-pair scores"] = _fig_to_base64(fig)
+
+    # Delta plot
+    fig, ax = plt.subplots(figsize=(10, 4))
+    colors = ["green" if d >= 0 else "red" for d in deltas]
+    ax.bar(x, deltas, color=colors)
+    ax.axhline(0, color="black", linewidth=1)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_ylabel("Delta (NoFog - Fog)")
+    ax.set_title("Score delta per pair (Q_norm)")
+    pngs["Score delta"] = _fig_to_base64(fig)
+
+    # Box plot
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.boxplot([fog_vals, nofog_vals])
+    ax.set_xticks([1, 2])
+    ax.set_xticklabels(["Fog", "NoFog"])
+    ax.set_ylabel("Q_norm")
+    ax.set_title("Score distribution")
+    pngs["Distribution"] = _fig_to_base64(fig)
+
+    html_parts = [
+        "<html><head><title>Fog vs NoFog Mesh Quality</title>",
+        "<style>table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:6px;}th{background:#eee;}</style>",
+        "</head><body>",
+        "<h2>Fog vs NoFog Mesh Quality (normalized scores)</h2>",
+        "<table>",
+        "<tr><th>Participant</th><th>Pair ID</th><th>Fog</th><th>Fog Q_norm</th><th>NoFog</th><th>NoFog Q_norm</th><th>Delta (NoFog-Fog)</th></tr>",
+    ]
+    for r in rows:
+        html_parts.append(
+            f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td><td>{r[4]}</td><td>{r[5]}</td><td>{r[6]}</td></tr>"
+        )
+    html_parts.append("</table><br/>")
+    for title, b64 in pngs.items():
+        html_parts.append(f"<h3>{title}</h3><img src='data:image/png;base64,{b64}' style='max-width:100%;'/>")
+    html_parts.append("</body></html>")
+
+    html_path = out_dir / "pairwise_quality_report.html"
+    html_path.write_text("\n".join(html_parts), encoding="utf-8")
+    print(f"[Info] Wrote pairwise HTML report: {html_path}")
+
+
 # -----------------------------------------------------------------------------
 # CLI
 # -----------------------------------------------------------------------------
@@ -731,85 +846,121 @@ def load_pairs_from_csv(csv_path: Path) -> List[Tuple[Path, Path, str, str]]:
         raise FileNotFoundError(f"CSV file not found: {csv_path}")
     
     pairs: List[Tuple[Path, Path, str, str]] = []
-    
-    # Read CSV and build session lookup
-    session_map: Dict[str, Dict[str, Any]] = {}
-    
+
+    def _mesh_present(value: Any) -> bool:
+        """Accept bools and truthy strings."""
+        if isinstance(value, bool):
+            return value
+        normalized = str(value or "").strip().lower()
+        return normalized in ("true", "1", "yes", "y")
+
+    def _extract_prefixed_mesh(row: Dict[str, Any], prefix: str) -> Optional[Path]:
+        for key in (f"{prefix}_color_mesh_fbx_path", f"{prefix}_color_mesh_ply_path"):
+            candidate = (row.get(key) or "").strip()
+            if candidate:
+                return Path(candidate)
+        return None
+
     with csv_path.open("r", newline="") as f:
         reader = csv.DictReader(f)
-        for row in reader:
-            session_id = row.get("session_id", "").strip()
-            if not session_id:
+        rows = list(reader)
+
+    has_symmetric_schema = any(
+        "nofog_color_mesh_fbx_path" in r or "fog_color_mesh_fbx_path" in r for r in rows
+    )
+
+    if has_symmetric_schema:
+        for row in rows:
+            participant = (row.get("participant") or "").strip()
+            fog_path = _extract_prefixed_mesh(row, "fog")
+            nofog_path = _extract_prefixed_mesh(row, "nofog")
+
+            fog_present = _mesh_present(row.get("fog_color_mesh_present", True))
+            nofog_present = _mesh_present(row.get("nofog_color_mesh_present", True))
+
+            if not participant or fog_path is None or nofog_path is None:
+                continue
+
+            if not fog_present or not fog_path.exists():
+                print(f"[Warning] Skipping participant '{participant}' (fog mesh missing): {fog_path}")
+                continue
+            if not nofog_present or not nofog_path.exists():
+                print(f"[Warning] Skipping participant '{participant}' (nofog mesh missing): {nofog_path}")
+                continue
+
+            pair_id = (
+                row.get("pair_id")
+                or f"{row.get('nofog_session_id', '')}_{row.get('fog_session_id', '')}".strip("_")
+                or f"{participant}_pair"
+            )
+            pairs.append((fog_path, nofog_path, participant, pair_id))
+    else:
+        # Legacy long/stacked schema (one row per condition)
+        session_map: Dict[str, Dict[str, Any]] = {}
+        with csv_path.open("r", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                session_id = row.get("session_id", "").strip()
+                if not session_id:
+                    continue
+                
+                if not _mesh_present(row.get("color_mesh_present", "")):
+                    continue
+                
+                mesh_path_str = row.get("color_mesh_fbx_path", "").strip()
+                if not mesh_path_str:
+                    continue
+                
+                mesh_path = Path(mesh_path_str)
+                if not mesh_path.exists():
+                    print(f"[Warning] Mesh path from CSV does not exist: {mesh_path}")
+                    continue
+                
+                condition = row.get("condition", "").strip()
+                paired_session_id = row.get("paired_session_id", "").strip()
+                participant = row.get("participant", "").strip()
+                
+                session_map[session_id] = {
+                    "condition": condition,
+                    "paired_session_id": paired_session_id,
+                    "mesh_path": mesh_path,
+                    "participant": participant,
+                }
+        
+        processed_pairs = set()
+        for session_id, session_data in session_map.items():
+            paired_id = session_data["paired_session_id"]
+            
+            if session_id in processed_pairs or paired_id in processed_pairs:
                 continue
             
-            # Check if mesh is present
-            mesh_present_str = row.get("color_mesh_present", "").strip().lower()
-            if mesh_present_str not in ("true", "1", "yes"):
+            if paired_id not in session_map:
                 continue
             
-            # Get mesh path
-            mesh_path_str = row.get("color_mesh_fbx_path", "").strip()
-            if not mesh_path_str:
+            paired_data = session_map[paired_id]
+            if paired_data["paired_session_id"] != session_id:
                 continue
             
-            mesh_path = Path(mesh_path_str)
-            if not mesh_path.exists():
-                print(f"[Warning] Mesh path from CSV does not exist: {mesh_path}")
+            cond1 = session_data["condition"]
+            cond2 = paired_data["condition"]
+            
+            if cond1 == "Fog" and cond2 == "NoFog":
+                fog_path = session_data["mesh_path"]
+                nofog_path = paired_data["mesh_path"]
+                participant = session_data["participant"]
+                pair_id = f"{session_id}_{paired_id}"
+            elif cond1 == "NoFog" and cond2 == "Fog":
+                nofog_path = session_data["mesh_path"]
+                fog_path = paired_data["mesh_path"]
+                participant = session_data["participant"]
+                pair_id = f"{paired_id}_{session_id}"
+            else:
+                print(f"[Warning] Skipping pair {session_id}/{paired_id}: unexpected conditions ({cond1}/{cond2})")
                 continue
             
-            condition = row.get("condition", "").strip()
-            paired_session_id = row.get("paired_session_id", "").strip()
-            participant = row.get("participant", "").strip()
-            
-            session_map[session_id] = {
-                "condition": condition,
-                "paired_session_id": paired_session_id,
-                "mesh_path": mesh_path,
-                "participant": participant,
-            }
-    
-    # Match pairs: find sessions where A's paired_session_id is B's session_id and vice versa
-    processed_pairs = set()
-    
-    for session_id, session_data in session_map.items():
-        paired_id = session_data["paired_session_id"]
-        
-        # Skip if already processed as part of a pair
-        if session_id in processed_pairs or paired_id in processed_pairs:
-            continue
-        
-        # Check if paired session exists in map
-        if paired_id not in session_map:
-            continue
-        
-        paired_data = session_map[paired_id]
-        
-        # Verify they reference each other
-        if paired_data["paired_session_id"] != session_id:
-            continue
-        
-        # Determine which is fog and which is nofog
-        cond1 = session_data["condition"]
-        cond2 = paired_data["condition"]
-        
-        if cond1 == "Fog" and cond2 == "NoFog":
-            fog_path = session_data["mesh_path"]
-            nofog_path = paired_data["mesh_path"]
-            participant = session_data["participant"]
-            pair_id = f"{session_id}_{paired_id}"
-        elif cond1 == "NoFog" and cond2 == "Fog":
-            nofog_path = session_data["mesh_path"]
-            fog_path = paired_data["mesh_path"]
-            participant = session_data["participant"]
-            pair_id = f"{paired_id}_{session_id}"
-        else:
-            # Skip if conditions don't match expected pattern
-            print(f"[Warning] Skipping pair {session_id}/{paired_id}: unexpected conditions ({cond1}/{cond2})")
-            continue
-        
-        pairs.append((fog_path, nofog_path, participant, pair_id))
-        processed_pairs.add(session_id)
-        processed_pairs.add(paired_id)
+            pairs.append((fog_path, nofog_path, participant, pair_id))
+            processed_pairs.add(session_id)
+            processed_pairs.add(paired_id)
     
     return pairs
 
@@ -868,6 +1019,13 @@ Examples:
         help="Optional path to write detailed CSV with all metrics and scores.",
     )
 
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("analysis/mesh_quality_batch"),
+        help="Output directory for batch artifacts (plots, pairwise summary).",
+    )
+
     return parser.parse_args()
 
 
@@ -876,6 +1034,7 @@ def main() -> None:
 
     mesh_paths: List[Tuple[Path, str]] = []
     pair_indices: List[Tuple[int, int]] = []  # indices into mesh_paths referencing (fog, nofog)
+    pair_meta: List[Dict[str, str]] = []      # metadata per pair: participant, pair_id
 
     # CSV-based pair loading mode
     if args.from_csv:
@@ -902,6 +1061,12 @@ def main() -> None:
             nofog_index = len(mesh_paths)
             mesh_paths.append((nofog_path, nofog_name))
             pair_indices.append((fog_index, nofog_index))
+            pair_meta.append({
+                "participant": participant,
+                "pair_id": pair_id,
+                "fog_name": fog_name,
+                "nofog_name": nofog_name,
+            })
 
     # Manual pair mode
     if args.pair:
@@ -921,6 +1086,12 @@ def main() -> None:
             nofog_index = len(mesh_paths)
             mesh_paths.append((nofog_path, nofog_name))
             pair_indices.append((fog_index, nofog_index))
+            pair_meta.append({
+                "participant": f"pair{idx}",
+                "pair_id": f"pair{idx}",
+                "fog_name": fog_name,
+                "nofog_name": nofog_name,
+            })
 
     # Unpaired meshes
     for p in args.meshes:
@@ -942,10 +1113,17 @@ def main() -> None:
     # Compute batch-normalized quality scores
     scores = compute_quality_scores(raw_list)
 
-    # Optional CSV output
+    out_dir = args.out_dir.resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # CSV output
     if args.csv is not None:
         write_csv(scores, args.csv)
         print(f"[Info] Wrote CSV report to: {args.csv}")
+    else:
+        default_csv = out_dir / "quality_scores.csv"
+        write_csv(scores, default_csv)
+        print(f"[Info] Wrote CSV report to: {default_csv}")
 
     # Print overall ranking
     print_batch_summary(scores)
@@ -958,6 +1136,7 @@ def main() -> None:
             nofog_s = scores[nofog_idx]
             pairs.append((fog_s, nofog_s))
         print_pair_summaries(pairs)
+        write_pairwise_reports(scores, pair_indices, pair_meta, out_dir)
 
 
 if __name__ == "__main__":

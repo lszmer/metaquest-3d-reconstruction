@@ -23,6 +23,7 @@ You can additionally emit an aggregate CSV via --aggregate_csv.
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterable, List, Sequence
@@ -68,6 +69,10 @@ class MovementSummary:
     yaw_range_rad: float
     pitch_range_rad: float
     roll_range_rad: float
+    cumulative_vertical_rotation_rad: float  # Cumulative up-down head rotation (pitch) in radians
+    cumulative_horizontal_rotation_rad: float  # Cumulative left-right head rotation (yaw) in radians
+    viewing_sphere_coverage_percent: float  # Percentage of viewing sphere covered (0-100)
+    viewing_sphere_coverage_with_fov_percent: float  # Percentage covered accounting for FOV cone
 
 
 def infer_time_scale_to_seconds(timestamps: np.ndarray) -> float:
@@ -129,30 +134,218 @@ def compute_euler_ranges(quaternions: np.ndarray) -> tuple[float, float, float]:
     return yaw_range, pitch_range, roll_range
 
 
-def load_participant_mapping(master_report_csv: Path | None) -> dict[str, tuple[str, str]]:
-    """Load participant and condition mapping from master report CSV.
-    
-    Returns dict mapping session_dir (as string) to (participant, condition) tuple.
+def compute_viewing_sphere_coverage(quaternions: np.ndarray, fov_degrees: float = 73.1) -> tuple[float, float]:
     """
+    Compute viewing sphere coverage - what percentage of possible viewing directions were covered.
+    
+    This measures how much of the sphere around the user's head was actually looked at,
+    accounting for field of view (FOV). The body position doesn't matter - only head rotation.
+    
+    Args:
+        quaternions: Array of head rotation quaternions
+        fov_degrees: Field of view in degrees (default: 73.1°, i.e., HFOV = VFOV = 1.276 rad)
+    
+    Returns:
+        coverage_percent: Percentage covered without FOV (exact gaze directions)
+        coverage_with_fov_percent: Percentage covered accounting for FOV cone
+    """
+    if len(quaternions) == 0:
+        return 0.0, 0.0
+    
+    # Convert quaternions to rotation matrices and extract forward direction
+    # Forward direction in head space is typically [0, 0, -1] or [0, 0, 1] depending on convention
+    # For Quest, forward is typically -Z in head space
+    forward_head_space = np.array([0.0, 0.0, -1.0])  # Forward in head-local coordinates
+    
+    rots = R.from_quat(quaternions)
+    
+    # Transform forward direction to world space for each rotation
+    forward_directions = rots.apply(forward_head_space)
+    
+    # Normalize to unit vectors (should already be unit, but be safe)
+    forward_directions = forward_directions / (np.linalg.norm(forward_directions, axis=1, keepdims=True) + 1e-10)
+    
+    # Discretize sphere using spherical coordinates (theta, phi)
+    # theta: azimuth (0 to 2π), phi: elevation (-π/2 to π/2)
+    # Higher resolution = more accurate but slower
+    resolution = 180  # 180x360 grid = 64,800 cells (reasonable accuracy)
+    theta_bins = resolution * 2  # Azimuth bins
+    phi_bins = resolution  # Elevation bins
+    
+    # Create coverage maps
+    coverage_map = np.zeros((phi_bins, theta_bins), dtype=bool)
+    coverage_map_fov = np.zeros((phi_bins, theta_bins), dtype=bool)
+    
+    # Convert FOV to radians
+    fov_rad = np.radians(fov_degrees)
+    fov_half_rad = fov_rad / 2.0
+    
+    # Convert forward directions to spherical coordinates
+    # x, y, z -> theta (azimuth), phi (elevation)
+    x, y, z = forward_directions[:, 0], forward_directions[:, 1], forward_directions[:, 2]
+    
+    # Azimuth: angle in X-Z plane (0 to 2π)
+    theta = np.arctan2(x, z)  # atan2(x, z) gives angle in X-Z plane
+    theta = (theta + 2 * np.pi) % (2 * np.pi)  # Normalize to [0, 2π]
+    
+    # Elevation: angle from horizontal plane (-π/2 to π/2)
+    # y is up, so phi = arcsin(y) for elevation
+    phi = np.arcsin(np.clip(y, -1.0, 1.0))
+    
+    # Convert to bin indices
+    theta_indices = ((theta / (2 * np.pi)) * theta_bins).astype(int)
+    theta_indices = np.clip(theta_indices, 0, theta_bins - 1)
+    
+    phi_indices = ((phi + np.pi / 2) / np.pi * phi_bins).astype(int)
+    phi_indices = np.clip(phi_indices, 0, phi_bins - 1)
+    
+    # Mark exact gaze directions
+    for t_idx, p_idx in zip(theta_indices, phi_indices):
+        coverage_map[p_idx, t_idx] = True
+    
+    # For FOV coverage, mark a cone around each viewing direction
+    # Use a more efficient approach: for each viewing direction, check all grid cells
+    # and mark those within the FOV cone
+    
+    # Create grid of all possible directions
+    theta_grid = np.linspace(0, 2 * np.pi, theta_bins)
+    phi_grid = np.linspace(-np.pi / 2, np.pi / 2, phi_bins)
+    theta_mesh, phi_mesh = np.meshgrid(theta_grid, phi_grid)
+    
+    # Convert grid to Cartesian directions
+    x_grid = np.cos(phi_mesh) * np.sin(theta_mesh)
+    y_grid = np.sin(phi_mesh)
+    z_grid = np.cos(phi_mesh) * np.cos(theta_mesh)
+
+    # Latitude weighting (to avoid over-weighting poles in equirectangular grid)
+    # Weight per cell is cos(phi)
+    cell_weights = np.cos(phi_mesh)
+    
+    # For each viewing direction, mark grid cells within FOV cone
+    # Sample viewing directions (don't need every single one for FOV)
+    sample_step = max(1, len(forward_directions) // 100)  # Sample up to 100 directions for FOV
+    for center_dir in forward_directions[::sample_step]:
+        # Compute dot product with all grid directions
+        dot_products = (
+            x_grid * center_dir[0] + 
+            y_grid * center_dir[1] + 
+            z_grid * center_dir[2]
+        )
+        
+        # Mark cells within FOV cone (cos(angle) >= cos(fov_half))
+        cos_fov_half = np.cos(fov_half_rad)
+        within_fov = dot_products >= cos_fov_half
+        coverage_map_fov[within_fov] = True
+    
+    # Calculate coverage percentages with latitude weighting
+    total_weight = np.sum(cell_weights)
+    covered_weight = np.sum(cell_weights * coverage_map)
+    covered_weight_fov = np.sum(cell_weights * coverage_map_fov)
+
+    coverage_percent = (covered_weight / (total_weight + 1e-12)) * 100.0
+    coverage_with_fov_percent = (covered_weight_fov / (total_weight + 1e-12)) * 100.0
+    
+    return float(coverage_percent), float(coverage_with_fov_percent)
+
+
+def compute_cumulative_directional_movements(quaternions: np.ndarray) -> tuple[float, float]:
+    """
+    Compute cumulative vertical and horizontal head rotations from user's perspective.
+    
+    Vertical movement: cumulative absolute changes in pitch (up-down head rotation)
+    Horizontal movement: cumulative absolute changes in yaw (left-right head rotation)
+    
+    These represent how much the user has turned their head up/down and left/right,
+    respectively, regardless of body position.
+    
+    Returns:
+        cumulative_vertical_rad: cumulative vertical rotation in radians (pitch)
+        cumulative_horizontal_rad: cumulative horizontal rotation in radians (yaw)
+    """
+    if len(quaternions) < 2:
+        return 0.0, 0.0
+    
+    # Convert quaternions to Euler angles (xyz convention: roll, pitch, yaw)
+    eulers = R.from_quat(quaternions).as_euler("xyz", degrees=False)
+    
+    # Extract pitch (vertical/up-down) and yaw (horizontal/left-right)
+    # eulers[:, 1] is pitch (rotation around Y axis - up/down)
+    # eulers[:, 2] is yaw (rotation around Z axis - left/right)
+    pitch_angles = eulers[:, 1]
+    yaw_angles = eulers[:, 2]
+    
+    # Compute cumulative absolute changes (how much the head has rotated)
+    pitch_deltas = np.diff(pitch_angles)
+    yaw_deltas = np.diff(yaw_angles)
+    
+    # Handle angle wrapping (e.g., going from -π to +π should be treated as small change)
+    # Normalize to [-π, π] range
+    pitch_deltas = np.arctan2(np.sin(pitch_deltas), np.cos(pitch_deltas))
+    yaw_deltas = np.arctan2(np.sin(yaw_deltas), np.cos(yaw_deltas))
+    
+    # Sum absolute changes to get cumulative rotation
+    cumulative_vertical = float(np.abs(pitch_deltas).sum())
+    cumulative_horizontal = float(np.abs(yaw_deltas).sum())
+    
+    return cumulative_vertical, cumulative_horizontal
+
+
+def load_participant_mapping(master_report_csv: Path | None) -> dict[str, tuple[str, str]]:
+    """Load participant/condition mapping from master report CSV (wide or legacy)."""
     if master_report_csv is None or not master_report_csv.exists():
         return {}
     
     try:
         df = pd.read_csv(master_report_csv)
-        if "session_dir" not in df.columns or "participant" not in df.columns or "condition" not in df.columns:
-            return {}
-        
-        mapping = {}
+        mapping: dict[str, tuple[str, str]] = {}
+
+        # Legacy stacked schema
+        if {"session_dir", "participant", "condition"}.issubset(df.columns):
+            for _, row in df.iterrows():
+                session_dir = str(row["session_dir"])
+                participant = str(row["participant"])
+                condition = str(row["condition"])
+                mapping[session_dir] = (participant, condition)
+            return mapping
+
+        # Symmetric schema: prefixed session_dir columns per condition
         for _, row in df.iterrows():
-            session_dir = str(row["session_dir"])
-            participant = str(row["participant"])
-            condition = str(row["condition"])
-            mapping[session_dir] = (participant, condition)
-        
+            participant = str(row.get("participant", "")).strip()
+            for condition, prefix in (("NoFog", "nofog"), ("Fog", "fog")):
+                session_dir_val = row.get(f"{prefix}_session_dir")
+                if session_dir_val is None:
+                    continue
+                if isinstance(session_dir_val, float) and math.isnan(session_dir_val):
+                    continue
+                session_dir = str(session_dir_val).strip()
+                if session_dir:
+                    mapping[session_dir] = (participant, condition)
         return mapping
     except Exception as e:
         print(f"[warn] Could not load participant mapping: {e}")
         return {}
+
+
+def _extract_session_dirs(df: pd.DataFrame) -> list[Path]:
+    """Gather unique session directories from symmetric or legacy schema."""
+    columns: list[str] = []
+    if "session_dir" in df.columns:
+        columns.append("session_dir")
+    for prefix in ("nofog", "fog"):
+        col = f"{prefix}_session_dir"
+        if col in df.columns:
+            columns.append(col)
+
+    session_dirs: list[Path] = []
+    seen: set[str] = set()
+    for col in columns:
+        for val in df[col].dropna():
+            path_str = str(val).strip()
+            if not path_str or path_str in seen:
+                continue
+            seen.add(path_str)
+            session_dirs.append(Path(path_str))
+    return session_dirs
 
 
 def load_pose_dataframe(hmd_csv_path: Path) -> pd.DataFrame:
@@ -201,6 +394,8 @@ def summarize_capture(capture_dir: Path, participant_mapping: dict[str, tuple[st
     body_speeds, total_distance, net_displacement, peak_speed = compute_body_distance(positions, dt_seconds)
     angles, angular_speeds = compute_head_angles(quaternions, dt_seconds)
     yaw_range, pitch_range, roll_range = compute_euler_ranges(quaternions)
+    cumulative_vertical, cumulative_horizontal = compute_cumulative_directional_movements(quaternions)
+    viewing_coverage, viewing_coverage_fov = compute_viewing_sphere_coverage(quaternions, fov_degrees=73.1)
 
     head_cumulative = float(angles.sum()) if len(angles) else 0.0
     head_peak_speed = float(np.max(angular_speeds)) if len(angular_speeds) else 0.0
@@ -245,6 +440,10 @@ def summarize_capture(capture_dir: Path, participant_mapping: dict[str, tuple[st
         yaw_range_rad=yaw_range,
         pitch_range_rad=pitch_range,
         roll_range_rad=roll_range,
+        cumulative_vertical_rotation_rad=cumulative_vertical,
+        cumulative_horizontal_rotation_rad=cumulative_horizontal,
+        viewing_sphere_coverage_percent=viewing_coverage,
+        viewing_sphere_coverage_with_fov_percent=viewing_coverage_fov,
     )
 
 
@@ -313,11 +512,13 @@ def collect_capture_dirs(args: argparse.Namespace) -> list[Path]:
             )
         
         df = pd.read_csv(args.master_report_csv)
-        if "session_dir" not in df.columns:
-            raise ValueError(f"Master report CSV missing 'session_dir' column: {args.master_report_csv}")
+        session_dir_candidates = _extract_session_dirs(df)
+        if not session_dir_candidates:
+            raise ValueError(
+                f"Master report CSV missing session_dir columns (expected session_dir or fog/nofog prefixes): {args.master_report_csv}"
+            )
         
-        for session_dir_str in df["session_dir"].dropna():
-            session_path = Path(session_dir_str)
+        for session_path in session_dir_candidates:
             if session_path.exists() and (session_path / "hmd_poses.csv").exists():
                 capture_dirs.append(session_path)
             else:
