@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 Statistical analysis of HMD motion data comparing Fog vs NoFog conditions.
+Median-based version using non-parametric statistics.
 
-Generates publication-quality visualizations and a comprehensive statistical report.
+Generates publication-quality visualizations and a comprehensive statistical report
+using median-based descriptive statistics and non-parametric tests.
 
 Usage:
-    python analysis/analyze_hmd_motion_stats.py \
+    python analysis/analyze_hmd_motion_stats_median.py \
         --input_csv analysis/hmd_analysis.csv \
-        --output_dir analysis/hmd_motion_analysis
+        --output_dir analysis/hmd_motion_analysis_median
 """
 
 from __future__ import annotations
@@ -64,34 +66,34 @@ METRICS = {
 def load_data(csv_path: Path) -> pd.DataFrame:
     """Load and preprocess HMD motion data."""
     df = pd.read_csv(csv_path)
-    
+
     # Use condition from CSV if available, otherwise infer from path
     if "condition" not in df.columns:
         df["condition"] = df["capture_path"].apply(
             lambda x: "Fog" if "/Fog/" in x else "NoFog" if "/NoFog/" in x else "Unknown"
         )
-    
+
     return df
 
 
 def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
-    """Perform statistical tests comparing Fog vs NoFog for each metric.
-    
-    Uses paired tests if participant information is available, otherwise uses independent samples tests.
+    """Perform median-based statistical tests comparing Fog vs NoFog for each metric.
+
+    Uses non-parametric tests throughout for consistency with median-based analysis.
     For metrics with directional hypotheses (head movement, rotation, coverage), uses one-tailed tests
     expecting fog > nofog.
     """
     results = []
-    
+
     # Check if we have participant information for paired analysis
     has_participants = "participant" in df.columns and df["participant"].notna().any()
-    
+
     if has_participants:
-        print("[info] Participant information detected - using paired statistical tests")
-    
+        print("[info] Participant information detected - using paired non-parametric tests")
+
     fog_data = df[df["condition"] == "Fog"]
     nofog_data = df[df["condition"] == "NoFog"]
-    
+
     # Metrics where we expect fog > nofog (one-tailed tests)
     # These represent metrics where fog condition should show better/more activity
     improvement_metrics = [
@@ -102,32 +104,32 @@ def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
         "viewing_sphere_coverage_percent",  # Viewing sphere coverage
         "viewing_sphere_coverage_with_fov_percent",  # Viewing sphere coverage with FOV
     ]
-    
+
     for metric_col, (display_name, unit) in METRICS.items():
         # Skip if metric column doesn't exist in the data (e.g., old CSV files)
         if metric_col not in df.columns:
             print(f"[warn] Skipping metric '{metric_col}' - not found in data (may need to recompute HMD stats)")
             continue
-        
+
         fog_values = fog_data[metric_col].dropna()
         nofog_values = nofog_data[metric_col].dropna()
-        
+
         if len(fog_values) < 2 or len(nofog_values) < 2:
             continue
-        
-        # Descriptive statistics
-        fog_mean = fog_values.mean()
-        fog_std = fog_values.std()
+
+        # Descriptive statistics (median-based)
         fog_median = fog_values.median()
+        fog_mad = stats.median_abs_deviation(fog_values)  # Median Absolute Deviation
         fog_q25 = fog_values.quantile(0.25)
         fog_q75 = fog_values.quantile(0.75)
-        
-        nofog_mean = nofog_values.mean()
-        nofog_std = nofog_values.std()
+        fog_iqr = fog_q75 - fog_q25
+
         nofog_median = nofog_values.median()
+        nofog_mad = stats.median_abs_deviation(nofog_values)
         nofog_q25 = nofog_values.quantile(0.25)
         nofog_q75 = nofog_values.quantile(0.75)
-        
+        nofog_iqr = nofog_q75 - nofog_q25
+
         # Paired analysis if participants available
         common_participants = []
         if has_participants:
@@ -135,106 +137,86 @@ def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
             paired_df = df[["participant", "condition", metric_col]].dropna()
             fog_paired = paired_df[paired_df["condition"] == "Fog"].set_index("participant")[metric_col]
             nofog_paired = paired_df[paired_df["condition"] == "NoFog"].set_index("participant")[metric_col]
-            
+
             # Get common participants
             common_participants = fog_paired.index.intersection(nofog_paired.index)
             if len(common_participants) >= 2:
                 fog_paired_vals = fog_paired[common_participants].values
                 nofog_paired_vals = nofog_paired[common_participants].values
-                differences = fog_paired_vals - nofog_paired_vals
-                
-                # Test normality of differences
-                _, diff_normal = stats.shapiro(differences) if len(differences) <= 5000 else (None, 0.05)
-                
+
                 # Determine if one-tailed test is appropriate (for improvement metrics)
                 is_improvement_metric = metric_col in improvement_metrics
                 alternative = "greater" if is_improvement_metric else "two-sided"
-                
-                if diff_normal > 0.05:
-                    # Paired t-test
-                    if is_improvement_metric:
-                        # One-tailed: test if fog > nofog
-                        stat, p_value_two_tailed = stats.ttest_rel(fog_paired_vals, nofog_paired_vals)
-                        # Convert to one-tailed p-value
-                        if stat > 0:  # Fog is greater
-                            p_value = p_value_two_tailed / 2.0
-                        else:  # Fog is not greater
-                            p_value = 1.0 - (p_value_two_tailed / 2.0)
-                        test_name = "Paired t-test (one-tailed: fog > nofog)"
-                    else:
-                        stat, p_value = stats.ttest_rel(fog_paired_vals, nofog_paired_vals)
-                        test_name = "Paired t-test"
-                else:
-                    # Wilcoxon signed-rank test
-                    stat, p_value = stats.wilcoxon(fog_paired_vals, nofog_paired_vals, alternative=alternative)
-                    test_name = f"Wilcoxon signed-rank ({alternative})" if is_improvement_metric else "Wilcoxon signed-rank"
-                
-                # Effect size for paired data (Cohen's d for paired samples)
-                diff_mean = differences.mean()
-                diff_std = differences.std()
-                cohens_d = diff_mean / diff_std if diff_std > 0 else 0.0
+
+                # Always use Wilcoxon signed-rank test for paired data
+                stat, p_value = stats.wilcoxon(fog_paired_vals, nofog_paired_vals, alternative=alternative)
+                test_name = f"Wilcoxon signed-rank ({alternative})"
+
+                # Effect size: r = Z / sqrt(N) where Z is the test statistic
+                # For Wilcoxon, we can use the normalized statistic
+                try:
+                    z_stat = stat / np.sqrt(len(common_participants))
+                    effect_size_r = abs(z_stat) / np.sqrt(len(common_participants))
+                except:
+                    effect_size_r = 0.0
+
                 n_pairs = len(common_participants)
             else:
                 # Fall back to independent samples
                 has_participants = False
-        
+
         # Independent samples analysis (fallback or if no participants)
         if not has_participants or len(common_participants) < 2:
-            # Test normality (Shapiro-Wilk)
-            _, fog_normal = stats.shapiro(fog_values) if len(fog_values) <= 5000 else (None, 0.05)
-            _, nofog_normal = stats.shapiro(nofog_values) if len(nofog_values) <= 5000 else (None, 0.05)
-            
-            # Choose appropriate test
-            if fog_normal > 0.05 and nofog_normal > 0.05:
-                # Both normal: use t-test
-                stat, p_value = stats.ttest_ind(fog_values, nofog_values)
-                test_name = "Independent samples t-test"
-            else:
-                # Non-normal: use Mann-Whitney U
-                stat, p_value = stats.mannwhitneyu(fog_values, nofog_values, alternative="two-sided")
-                test_name = "Mann-Whitney U"
-            
-            # Effect size (Cohen's d for independent samples)
-            pooled_std = np.sqrt(((len(fog_values) - 1) * fog_values.std()**2 + 
-                                  (len(nofog_values) - 1) * nofog_values.std()**2) / 
-                                 (len(fog_values) + len(nofog_values) - 2))
-            cohens_d = (fog_mean - nofog_mean) / pooled_std if pooled_std > 0 else 0.0
+            # Always use Mann-Whitney U test for independent samples
+            alternative = "greater" if metric_col in improvement_metrics else "two-sided"
+            stat, p_value = stats.mannwhitneyu(fog_values, nofog_values, alternative=alternative)
+            test_name = f"Mann-Whitney U ({alternative})"
+
+            # Effect size: r = Z / sqrt(N) where Z is approximately the test statistic
+            # For Mann-Whitney, we can use the normalized statistic
+            try:
+                n_total = len(fog_values) + len(nofog_values)
+                z_stat = stat / np.sqrt(n_total)
+                effect_size_r = abs(z_stat) / np.sqrt(n_total)
+            except:
+                effect_size_r = 0.0
+
             n_pairs = None
-        
-        # Effect size interpretation
-        if abs(cohens_d) < 0.2:
+
+        # Effect size interpretation (using r)
+        if abs(effect_size_r) < 0.1:
             effect_size = "negligible"
-        elif abs(cohens_d) < 0.5:
+        elif abs(effect_size_r) < 0.3:
             effect_size = "small"
-        elif abs(cohens_d) < 0.8:
+        elif abs(effect_size_r) < 0.5:
             effect_size = "medium"
         else:
             effect_size = "large"
-        
+
         results.append({
             "metric": display_name,
             "unit": unit,
             "fog_n": len(fog_values),
-            "fog_mean": fog_mean,
-            "fog_std": fog_std,
             "fog_median": fog_median,
+            "fog_mad": fog_mad,
             "fog_q25": fog_q25,
             "fog_q75": fog_q75,
+            "fog_iqr": fog_iqr,
             "nofog_n": len(nofog_values),
-            "nofog_mean": nofog_mean,
-            "nofog_std": nofog_std,
             "nofog_median": nofog_median,
+            "nofog_mad": nofog_mad,
             "nofog_q25": nofog_q25,
             "nofog_q75": nofog_q75,
+            "nofog_iqr": nofog_iqr,
             "test": test_name,
             "n_pairs": n_pairs,
             "statistic": stat,
             "p_value": p_value,
             "significant": p_value < 0.05,
-            "cohens_d": cohens_d,
+            "effect_size_r": effect_size_r,
             "effect_size": effect_size,
         })
-    
+
     return pd.DataFrame(results)
 
 
@@ -242,23 +224,23 @@ def create_box_plots(df: pd.DataFrame, output_dir: Path) -> None:
     """Create box plots comparing Fog vs NoFog for each metric using seaborn."""
     # Count available metrics first
     available_metrics = [(col, name) for col, name in METRICS.items() if col in df.columns]
-    
+
     if len(available_metrics) == 0:
         print("[warn] No metrics available for box plots")
         return
-    
+
     n_metrics = len(available_metrics)
     n_cols = 3
     n_rows = (n_metrics + n_cols - 1) // n_cols
-    
+
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
     axes = axes.flatten() if n_metrics > 1 else [axes]
-    
+
     for idx, (metric_col, (display_name, unit)) in enumerate(available_metrics):
         ax = axes[idx]
-        
+
         plot_df = df[[metric_col, "condition"]].dropna()
-        
+
         # Use seaborn boxplot for better styling
         sns.boxplot(
             data=plot_df,
@@ -271,15 +253,15 @@ def create_box_plots(df: pd.DataFrame, output_dir: Path) -> None:
             showmeans=True,
             legend=False,
         )
-        
+
         ax.set_ylabel(f"{display_name} ({unit})")
         ax.set_xlabel("")
         ax.set_title(display_name)
-    
+
     # Hide unused subplots
     for idx in range(n_metrics, len(axes)):
         axes[idx].set_visible(False)
-    
+
     plt.tight_layout()
     plt.savefig(output_dir / "boxplots_comparison.png")
     plt.close()
@@ -289,23 +271,23 @@ def create_violin_plots(df: pd.DataFrame, output_dir: Path) -> None:
     """Create violin plots comparing Fog vs NoFog for each metric using seaborn."""
     # Count available metrics first
     available_metrics = [(col, name) for col, name in METRICS.items() if col in df.columns]
-    
+
     if len(available_metrics) == 0:
         print("[warn] No metrics available for violin plots")
         return
-    
+
     n_metrics = len(available_metrics)
     n_cols = 3
     n_rows = (n_metrics + n_cols - 1) // n_cols
-    
+
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
     axes = axes.flatten() if n_metrics > 1 else [axes]
-    
+
     for idx, (metric_col, (display_name, unit)) in enumerate(available_metrics):
         ax = axes[idx]
-        
+
         plot_df = df[[metric_col, "condition"]].dropna()
-        
+
         # Use seaborn violinplot for better styling
         sns.violinplot(
             data=plot_df,
@@ -318,15 +300,15 @@ def create_violin_plots(df: pd.DataFrame, output_dir: Path) -> None:
             inner="quart",  # Show quartiles inside
             legend=False,
         )
-        
+
         ax.set_ylabel(f"{display_name} ({unit})")
         ax.set_xlabel("")
         ax.set_title(display_name)
-    
+
     # Hide unused subplots
     for idx in range(n_metrics, len(axes)):
         axes[idx].set_visible(False)
-    
+
     plt.tight_layout()
     plt.savefig(output_dir / "violinplots_comparison.png")
     plt.close()
@@ -337,7 +319,7 @@ def create_paired_plots(df: pd.DataFrame, output_dir: Path) -> None:
     if "participant" not in df.columns or df["participant"].isna().all():
         print("[warn] No participant information available - skipping paired plots")
         return
-    
+
     # Select key metrics for paired visualization (filter to those that exist)
     key_metrics = [
         "body_distance_m",
@@ -348,61 +330,61 @@ def create_paired_plots(df: pd.DataFrame, output_dir: Path) -> None:
         "cumulative_horizontal_rotation_rad",
         "viewing_sphere_coverage_with_fov_percent",
     ]
-    
+
     # Filter to metrics that exist in the data
     available_key_metrics = [m for m in key_metrics if m in df.columns]
-    
+
     if len(available_key_metrics) == 0:
         print("[warn] No key metrics available for paired plots")
         return
-    
+
     n_metrics = len(available_key_metrics)
     fig, axes = plt.subplots(1, n_metrics, figsize=(5 * n_metrics, 6))
     if n_metrics == 1:
         axes = [axes]
-    
+
     for idx, metric_col in enumerate(available_key_metrics):
         ax = axes[idx]
         metric_name = METRICS[metric_col][0]
         unit = METRICS[metric_col][1]
-        
+
         # Create paired dataset
         paired_df = df[["participant", "condition", metric_col]].dropna()
         fog_data = paired_df[paired_df["condition"] == "Fog"].set_index("participant")[metric_col]
         nofog_data = paired_df[paired_df["condition"] == "NoFog"].set_index("participant")[metric_col]
-        
+
         # Get common participants
         common_participants = fog_data.index.intersection(nofog_data.index)
         if len(common_participants) == 0:
             continue
-        
+
         fog_vals = fog_data[common_participants].values
         nofog_vals = nofog_data[common_participants].values
-        
+
         # Create positions for plotting (NoFog on left, Fog on right)
         x_pos = np.arange(len(common_participants))
         x_nofog = x_pos - 0.15
         x_fog = x_pos + 0.15
-        
+
         # Plot points (NoFog first, then Fog)
-        ax.scatter(x_nofog, nofog_vals, color=sns.color_palette("colorblind")[1], 
+        ax.scatter(x_nofog, nofog_vals, color=sns.color_palette("colorblind")[1],
                   s=50, alpha=0.7, label="NoFog", zorder=3)
-        ax.scatter(x_fog, fog_vals, color=sns.color_palette("colorblind")[0], 
+        ax.scatter(x_fog, fog_vals, color=sns.color_palette("colorblind")[0],
                   s=50, alpha=0.7, label="Fog", zorder=3)
-        
+
         # Draw lines connecting paired points (from NoFog to Fog)
         for i in range(len(common_participants)):
-            ax.plot([x_nofog[i], x_fog[i]], [nofog_vals[i], fog_vals[i]], 
+            ax.plot([x_nofog[i], x_fog[i]], [nofog_vals[i], fog_vals[i]],
                    'k-', alpha=0.3, linewidth=0.5, zorder=1)
-        
+
         ax.set_xticks(x_pos)
-        ax.set_xticklabels([p[:10] + "..." if len(p) > 10 else p for p in common_participants], 
+        ax.set_xticklabels([p[:10] + "..." if len(p) > 10 else p for p in common_participants],
                           rotation=45, ha="right")
         ax.set_ylabel(f"{metric_name} ({unit})")
         ax.set_title(f"{metric_name}\n(Paired by Participant)")
         ax.legend()
         ax.grid(True, alpha=0.3, axis="y")
-    
+
     plt.tight_layout()
     plt.savefig(output_dir / "paired_participant_plots.png")
     plt.close()
@@ -416,7 +398,7 @@ def analyze_improvements(df: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
     if "participant" not in df.columns or df["participant"].isna().all():
         print("[warn] No participant information - skipping improvement analysis")
         return pd.DataFrame()
-    
+
     # Metrics where we expect fog > nofog (one-tailed tests)
     improvement_metrics = [
         "head_avg_angular_speed_rad_s",  # Average head angular speed
@@ -426,154 +408,145 @@ def analyze_improvements(df: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
         "viewing_sphere_coverage_percent",  # Viewing sphere coverage
         "viewing_sphere_coverage_with_fov_percent",  # Viewing sphere coverage with FOV
     ]
-    
+
     # Filter to metrics that exist
     available_metrics = [m for m in improvement_metrics if m in df.columns]
-    
+
     if len(available_metrics) == 0:
         print("[warn] No improvement metrics available")
         return pd.DataFrame()
-    
+
     improvements = []
-    
+
     for metric_col in available_metrics:
         display_name = METRICS[metric_col][0]
         unit = METRICS[metric_col][1]
-        
+
         # Create paired dataset
         paired_df = df[["participant", "condition", metric_col]].dropna()
         fog_data = paired_df[paired_df["condition"] == "Fog"].set_index("participant")[metric_col]
         nofog_data = paired_df[paired_df["condition"] == "NoFog"].set_index("participant")[metric_col]
-        
+
         # Get common participants
         common_participants = fog_data.index.intersection(nofog_data.index)
         if len(common_participants) < 2:
             continue
-        
+
         fog_vals = fog_data[common_participants].values
         nofog_vals = nofog_data[common_participants].values
         differences = fog_vals - nofog_vals
-        
-        # Statistical test: is mean improvement significantly > 0?
-        _, diff_normal = stats.shapiro(differences) if len(differences) <= 5000 else (None, 0.05)
-        
-        if diff_normal > 0.05:
-            # One-sample t-test: test if mean difference > 0
-            stat, p_value_two_tailed = stats.ttest_1samp(differences, 0.0)
-            if stat > 0:  # Mean is positive
-                p_value = p_value_two_tailed / 2.0
-            else:
-                p_value = 1.0 - (p_value_two_tailed / 2.0)
-            test_name = "One-sample t-test (one-tailed: improvement > 0)"
-        else:
-            # Wilcoxon signed-rank test: test if median > 0
-            stat, p_value = stats.wilcoxon(differences, alternative="greater")
-            test_name = "Wilcoxon signed-rank (one-tailed: improvement > 0)"
-        
-        # Effect size (Cohen's d for one-sample)
-        diff_mean = differences.mean()
-        diff_std = differences.std()
-        cohens_d = diff_mean / diff_std if diff_std > 0 else 0.0
-        
+
+        # Statistical test: is median improvement significantly > 0?
+        # Use Wilcoxon signed-rank test (one-tailed: improvement > 0)
+        stat, p_value = stats.wilcoxon(differences, alternative="greater")
+        test_name = "Wilcoxon signed-rank (one-tailed: improvement > 0)"
+
+        # Effect size: r = Z / sqrt(N) where Z is the test statistic
+        try:
+            z_stat = stat / np.sqrt(len(common_participants))
+            cohens_d_like = abs(z_stat) / np.sqrt(len(common_participants))
+        except:
+            cohens_d_like = 0.0
+
         # Effect size interpretation
-        if abs(cohens_d) < 0.2:
+        if abs(cohens_d_like) < 0.1:
             effect_size = "negligible"
-        elif abs(cohens_d) < 0.5:
+        elif abs(cohens_d_like) < 0.3:
             effect_size = "small"
-        elif abs(cohens_d) < 0.8:
+        elif abs(cohens_d_like) < 0.5:
             effect_size = "medium"
         else:
             effect_size = "large"
-        
+
         improvements.append({
             "metric": display_name,
             "unit": unit,
             "n_participants": len(common_participants),
-            "mean_improvement": diff_mean,
-            "std_improvement": diff_std,
             "median_improvement": float(np.median(differences)),
+            "mad_improvement": float(stats.median_abs_deviation(differences)),
+            "mean_improvement": float(np.mean(differences)),  # Keep mean for reference
+            "std_improvement": float(np.std(differences)),    # Keep std for reference
             "min_improvement": float(np.min(differences)),
             "max_improvement": float(np.max(differences)),
-            "improvement_percent": (diff_mean / abs(nofog_vals.mean()) * 100) if abs(nofog_vals.mean()) > 1e-10 else 0.0,
+            "improvement_percent": (np.median(differences) / abs(np.median(nofog_vals)) * 100) if abs(np.median(nofog_vals)) > 1e-10 else 0.0,
             "test": test_name,
             "statistic": stat,
             "p_value": p_value,
             "significant": p_value < 0.05,
-            "cohens_d": cohens_d,
+            "effect_size_r": cohens_d_like,
             "effect_size": effect_size,
         })
-        
+
         # Create improvement plot for this metric
         fig, ax = plt.subplots(figsize=(10, 6))
-        
+
         x_pos = np.arange(len(common_participants))
         colors = ['green' if d > 0 else 'red' for d in differences]
-        
+
         bars = ax.barh(x_pos, differences, color=colors, alpha=0.7, edgecolor='black')
-        
+
         # Add zero line
         ax.axvline(x=0, color='black', linestyle='--', linewidth=1)
-        
-        # Add mean improvement line
-        ax.axvline(x=diff_mean, color='blue', linestyle='-', linewidth=2, 
-                  label=f'Mean improvement: {diff_mean:.2f} {unit}')
-        
+
+        # Add median improvement line
+        median_imp = np.median(differences)
+        ax.axvline(x=median_imp, color='blue', linestyle='-', linewidth=2,
+                  label=f'Median improvement: {median_imp:.2f} {unit}')
+
         ax.set_yticks(x_pos)
         ax.set_yticklabels([p[:15] + "..." if len(p) > 15 else p for p in common_participants])
         ax.set_xlabel(f"Improvement ({unit})\n(Fog - NoFog)")
         ax.set_title(f"{display_name}\nIndividual Participant Improvements\n"
-                    f"Mean: {diff_mean:.2f} {unit}, p={p_value:.4f} {'***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'}")
+                    f"Median: {median_imp:.2f} {unit}, p={p_value:.4f} {'***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else 'ns'}")
         ax.legend()
         ax.grid(True, alpha=0.3, axis='x')
-        
+
         # Add value labels on bars
         for i, (bar, val) in enumerate(zip(bars, differences)):
             ax.text(val + (0.01 * max(differences)) if val >= 0 else val - (0.01 * max(differences)),
                    i, f'{val:.2f}', va='center',
                    ha='left' if val >= 0 else 'right', fontsize=9)
-        
+
         plt.tight_layout()
         safe_name = display_name.replace(" ", "_").replace("(", "").replace(")", "").replace("/", "_")
         plt.savefig(output_dir / f"improvements_{safe_name}.png")
         plt.close()
-    
+
     # Create summary improvement plot if we have multiple metrics
     if len(improvements) > 1:
         fig, ax = plt.subplots(figsize=(10, 6))
-        
+
         metrics = [row["metric"] for row in improvements]
-        mean_improvements = [row["mean_improvement"] for row in improvements]
-        std_improvements = [row["std_improvement"] for row in improvements]
+        median_improvements = [row["median_improvement"] for row in improvements]
         p_values = [row["p_value"] for row in improvements]
-        
+
         x_pos = np.arange(len(metrics))
         colors = ['green' if p < 0.05 else 'orange' if p < 0.10 else 'gray' for p in p_values]
-        
-        bars = ax.barh(x_pos, mean_improvements, xerr=std_improvements, 
-                      color=colors, alpha=0.7, edgecolor='black', capsize=5)
-        
+
+        bars = ax.barh(x_pos, median_improvements, color=colors, alpha=0.7, edgecolor='black')
+
         ax.axvline(x=0, color='black', linestyle='--', linewidth=1)
         ax.set_yticks(x_pos)
         ax.set_yticklabels(metrics)
-        ax.set_xlabel("Mean Improvement (Fog - NoFog)")
+        ax.set_xlabel("Median Improvement (Fog - NoFog)")
         ax.set_title("Summary of Improvements Across Coverage Metrics")
         ax.grid(True, alpha=0.3, axis='x')
-        
+
         # Add significance indicators
-        for i, (bar, p_val, mean_imp) in enumerate(zip(bars, p_values, mean_improvements)):
+        for i, (bar, p_val, median_imp) in enumerate(zip(bars, p_values, median_improvements)):
             sig_text = '***' if p_val < 0.001 else '**' if p_val < 0.01 else '*' if p_val < 0.05 else 'ns'
-            ax.text(mean_imp + std_improvements[i] + 0.01 * max(mean_improvements),
+            ax.text(median_imp + 0.01 * max(median_improvements),
                    i, sig_text, va='center', fontsize=12, fontweight='bold')
-        
+
         plt.tight_layout()
         plt.savefig(output_dir / "improvements_summary.png")
         plt.close()
-    
+
     return pd.DataFrame(improvements)
 
 
 def create_summary_bar_chart(stats_df: pd.DataFrame, output_dir: Path) -> None:
-    """Create bar chart with error bars showing mean ± SD for key metrics."""
+    """Create bar chart with error bars showing median ± MAD for key metrics."""
     key_metrics = [
         "body_distance_m",
         "body_avg_speed_kmh",
@@ -583,88 +556,88 @@ def create_summary_bar_chart(stats_df: pd.DataFrame, output_dir: Path) -> None:
         "cumulative_horizontal_rotation_rad",
         "viewing_sphere_coverage_with_fov_percent",
     ]
-    
+
     # Filter to metrics that exist in stats_df
     available_metrics = []
     for metric_col in key_metrics:
         metric_name = METRICS[metric_col][0]
         if len(stats_df[stats_df["metric"] == metric_name]) > 0:
             available_metrics.append(metric_col)
-    
+
     if len(available_metrics) == 0:
         print("[warn] No key metrics available for summary bar chart")
         return
-    
+
     n_metrics = len(available_metrics)
     fig, axes = plt.subplots(1, n_metrics, figsize=(5 * n_metrics, 5))
     if n_metrics == 1:
         axes = [axes]
-    
+
     for idx, metric_col in enumerate(available_metrics):
         ax = axes[idx]
         metric_name = METRICS[metric_col][0]
         unit = METRICS[metric_col][1]
-        
+
         row = stats_df[stats_df["metric"] == metric_name].iloc[0]
-        
+
         x = np.arange(2)
-        means = [row["fog_mean"], row["nofog_mean"]]
-        stds = [row["fog_std"], row["nofog_std"]]
+        medians = [row["fog_median"], row["nofog_median"]]
+        mads = [row["fog_mad"], row["nofog_mad"]]
         # Use seaborn colorblind palette
         palette = sns.color_palette("colorblind", 2)
         colors = [palette[0], palette[1]]
-        
-        bars = ax.bar(x, means, yerr=stds, capsize=5, color=colors, alpha=0.7, edgecolor="black")
-        
+
+        bars = ax.bar(x, medians, yerr=mads, capsize=5, color=colors, alpha=0.7, edgecolor="black")
+
         # Add significance indicator
         if row["significant"]:
-            max_val = max(means) + max(stds)
+            max_val = max(medians) + max(mads)
             ax.plot([0, 1], [max_val * 1.1, max_val * 1.1], "k-", linewidth=1)
             ax.plot([0, 0], [max_val * 1.05, max_val * 1.1], "k-", linewidth=1)
             ax.plot([1, 1], [max_val * 1.05, max_val * 1.1], "k-", linewidth=1)
             p_text = f"p={row['p_value']:.3f}" if row['p_value'] >= 0.001 else "p<0.001"
             ax.text(0.5, max_val * 1.15, p_text, ha="center", fontsize=9)
-        
+
         ax.set_xticks(x)
         ax.set_xticklabels(["Fog", "NoFog"])
         ax.set_ylabel(f"{metric_name} ({unit})")
         ax.set_title(metric_name)
         ax.grid(True, alpha=0.3, axis="y")
-    
+
     plt.tight_layout()
     plt.savefig(output_dir / "summary_bar_chart.png")
     plt.close()
 
 
 def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, improvements_df: pd.DataFrame, output_dir: Path) -> None:
-    """Generate a comprehensive text report with statistical interpretation."""
+    """Generate a comprehensive text report with statistical interpretation (median-based)."""
     report_path = output_dir / "statistical_report.txt"
-    
+
     with open(report_path, "w") as f:
         f.write("=" * 80 + "\n")
-        f.write("HMD MOTION ANALYSIS: FOG vs NOFOG COMPARISON\n")
+        f.write("HMD MOTION ANALYSIS: FOG vs NOFOG COMPARISON (MEDIAN-BASED)\n")
         f.write("=" * 80 + "\n\n")
-        
+
         # Sample sizes
         fog_n = len(df[df["condition"] == "Fog"])
         nofog_n = len(df[df["condition"] == "NoFog"])
         has_participants = "participant" in df.columns and df["participant"].notna().any()
-        
+
         f.write(f"Sample Sizes:\n")
         f.write(f"  Fog condition: {fog_n} sessions\n")
         f.write(f"  NoFog condition: {nofog_n} sessions\n")
         f.write(f"  Total: {fog_n + nofog_n} sessions\n")
-        
+
         if has_participants:
             n_participants = df["participant"].nunique()
             f.write(f"  Participants: {n_participants}\n")
             f.write(f"  Design: Paired (each participant has both Fog and NoFog measurements)\n")
         f.write("\n")
-        
+
         f.write("=" * 80 + "\n")
-        f.write("STATISTICAL RESULTS\n")
+        f.write("MEDIAN-BASED STATISTICAL RESULTS\n")
         f.write("=" * 80 + "\n\n")
-        
+
         # Significant results first
         significant = stats_df[stats_df["significant"]].sort_values("p_value")
         if len(significant) > 0:
@@ -672,22 +645,22 @@ def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, improvements_df: p
             f.write("-" * 80 + "\n")
             for _, row in significant.iterrows():
                 f.write(f"\n{row['metric']} ({row['unit']}):\n")
-                f.write(f"  Fog:      M={row['fog_mean']:.3f}, SD={row['fog_std']:.3f}, "
-                       f"Median={row['fog_median']:.3f}, IQR=[{row['fog_q25']:.3f}, {row['fog_q75']:.3f}]\n")
-                f.write(f"  NoFog:    M={row['nofog_mean']:.3f}, SD={row['nofog_std']:.3f}, "
-                       f"Median={row['nofog_median']:.3f}, IQR=[{row['nofog_q25']:.3f}, {row['nofog_q75']:.3f}]\n")
+                f.write(f"  Fog:      Median={row['fog_median']:.3f}, MAD={row['fog_mad']:.3f}, "
+                       f"IQR=[{row['fog_q25']:.3f}, {row['fog_q75']:.3f}]\n")
+                f.write(f"  NoFog:    Median={row['nofog_median']:.3f}, MAD={row['nofog_mad']:.3f}, "
+                       f"IQR=[{row['nofog_q25']:.3f}, {row['nofog_q75']:.3f}]\n")
                 test_info = f"{row['test']}, statistic={row['statistic']:.3f}, p={row['p_value']:.4f}"
                 if pd.notna(row.get('n_pairs')):
                     test_info += f", n_pairs={int(row['n_pairs'])}"
                 f.write(f"  Test:     {test_info}\n")
-                f.write(f"  Effect:    Cohen's d={row['cohens_d']:.3f} ({row['effect_size']})\n")
-                
+                f.write(f"  Effect:    r={row['effect_size_r']:.3f} ({row['effect_size']})\n")
+
                 # Interpretation
-                direction = "higher" if row['fog_mean'] > row['nofog_mean'] else "lower"
+                direction = "higher" if row['fog_median'] > row['nofog_median'] else "lower"
                 f.write(f"  Result:    Fog condition shows {direction} {row['metric'].lower()} "
                        f"compared to NoFog condition.\n")
             f.write("\n")
-        
+
         # Non-significant results
         non_significant = stats_df[~stats_df["significant"]].sort_values("metric")
         if len(non_significant) > 0:
@@ -695,9 +668,9 @@ def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, improvements_df: p
             f.write("-" * 80 + "\n")
             for _, row in non_significant.iterrows():
                 f.write(f"{row['metric']}: p={row['p_value']:.4f}, "
-                       f"Cohen's d={row['cohens_d']:.3f} ({row['effect_size']})\n")
+                       f"r={row['effect_size_r']:.3f} ({row['effect_size']})\n")
             f.write("\n")
-        
+
         # Improvement analysis section
         if len(improvements_df) > 0:
             f.write("=" * 80 + "\n")
@@ -708,81 +681,76 @@ def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, improvements_df: p
             f.write("  • Cumulative head rotation (more total rotation)\n")
             f.write("  • Cumulative vertical/horizontal rotation (more structured scanning)\n")
             f.write("  • Viewing sphere coverage (better exploration)\n\n")
-            f.write("One-tailed tests are used to test if improvements are significantly > 0.\n\n")
-            
+            f.write("One-tailed Wilcoxon signed-rank tests are used to test if improvements are significantly > 0.\n\n")
+
             for _, row in improvements_df.iterrows():
                 f.write(f"{row['metric']} ({row['unit']}):\n")
-                f.write(f"  Mean improvement: {row['mean_improvement']:.3f} {row['unit']}\n")
-                f.write(f"  Improvement percentage: {row['improvement_percent']:.1f}% relative to NoFog\n")
+                f.write(f"  Median improvement: {row['median_improvement']:.3f} {row['unit']}\n")
+                f.write(f"  MAD improvement: {row['mad_improvement']:.3f} {row['unit']}\n")
+                f.write(f"  Improvement percentage: {row['improvement_percent']:.1f}% relative to NoFog median\n")
                 f.write(f"  Range: [{row['min_improvement']:.3f}, {row['max_improvement']:.3f}] {row['unit']}\n")
-                f.write(f"  Median: {row['median_improvement']:.3f} {row['unit']}\n")
                 f.write(f"  Test: {row['test']}\n")
                 f.write(f"  Statistic: {row['statistic']:.3f}, p={row['p_value']:.4f}")
                 if row['significant']:
                     f.write(" *** SIGNIFICANT ***\n")
                 else:
                     f.write(" (not significant)\n")
-                f.write(f"  Effect size: Cohen's d={row['cohens_d']:.3f} ({row['effect_size']})\n")
-                
+                f.write(f"  Effect size: r={row['effect_size_r']:.3f} ({row['effect_size']})\n")
+
                 if row['significant']:
                     f.write(f"  ✓ Fog condition shows significant improvement over NoFog\n")
-                    f.write(f"    ({row['n_participants']} participants, mean improvement: {row['mean_improvement']:.2f} {row['unit']})\n")
+                    f.write(f"    ({row['n_participants']} participants, median improvement: {row['median_improvement']:.2f} {row['unit']})\n")
                 else:
                     f.write(f"  ✗ No significant improvement detected\n")
                 f.write("\n")
-        
+
         f.write("=" * 80 + "\n")
         f.write("INTERPRETATION SUMMARY\n")
         f.write("=" * 80 + "\n\n")
-        
+
         n_significant = len(significant)
         n_total = len(stats_df)
         f.write(f"Out of {n_total} metrics analyzed, {n_significant} showed statistically "
                f"significant differences between Fog and NoFog conditions.\n\n")
-        
+
         if n_significant > 0:
             f.write("Key Findings:\n")
             for _, row in significant.head(5).iterrows():  # Top 5 most significant
-                direction = "increased" if row['fog_mean'] > row['nofog_mean'] else "decreased"
+                direction = "increased" if row['fog_median'] > row['nofog_median'] else "decreased"
                 f.write(f"  • {row['metric']}: {direction} in Fog condition "
-                       f"(p={row['p_value']:.4f}, d={row['cohens_d']:.3f})\n")
-        
+                       f"(p={row['p_value']:.4f}, r={row['effect_size_r']:.3f})\n")
+
         f.write("\n")
-        f.write("Effect Size Guidelines (Cohen's d):\n")
-        f.write("  |d| < 0.2:  Negligible effect\n")
-        f.write("  0.2 ≤ |d| < 0.5:  Small effect\n")
-        f.write("  0.5 ≤ |d| < 0.8:  Medium effect\n")
-        f.write("  |d| ≥ 0.8:  Large effect\n")
-        
+        f.write("Effect Size Guidelines (r - correlation coefficient):\n")
+        f.write("  |r| < 0.1:  Negligible effect\n")
+        f.write("  0.1 ≤ |r| < 0.3:  Small effect\n")
+        f.write("  0.3 ≤ |r| < 0.5:  Medium effect\n")
+        f.write("  |r| ≥ 0.5:  Large effect\n")
+
         f.write("\n")
         f.write("=" * 80 + "\n")
         f.write("METHODOLOGY\n")
         f.write("=" * 80 + "\n\n")
-        
+
         if has_participants:
             f.write("PAIRED DESIGN ANALYSIS:\n")
             f.write("  • Each participant completed both Fog and NoFog conditions\n")
-            f.write("  • Paired statistical tests account for within-subject variability\n")
+            f.write("  • Wilcoxon signed-rank tests account for within-subject variability\n")
             f.write("  • More powerful than independent samples tests for this design\n\n")
-        
-        f.write("Statistical tests were chosen based on data distribution:\n")
-        if has_participants:
-            f.write("  • Paired design: Shapiro-Wilk test on differences\n")
-            f.write("  • Normal differences: Paired t-test\n")
-            f.write("  • Non-normal differences: Wilcoxon signed-rank test\n")
-            f.write("  • One-tailed tests (fog > nofog) for metrics with directional hypotheses:\n")
-            f.write("    - Average head angular speed\n")
-            f.write("    - Cumulative head rotation\n")
-            f.write("    - Cumulative vertical/horizontal rotation\n")
-            f.write("    - Viewing sphere coverage\n")
-        else:
-            f.write("  • Independent samples: Shapiro-Wilk test used to assess normality\n")
-            f.write("  • Normal distributions: Independent samples t-test\n")
-            f.write("  • Non-normal distributions: Mann-Whitney U test\n")
-        f.write("  • Effect sizes calculated using Cohen's d\n")
+
+        f.write("Median-based non-parametric statistical analysis:\n")
+        f.write("  • All tests are non-parametric (distribution-free)\n")
+        f.write("  • Paired design: Wilcoxon signed-rank test\n")
+        f.write("  • Independent samples: Mann-Whitney U test\n")
+        f.write("  • One-tailed tests (fog > nofog) for metrics with directional hypotheses:\n")
+        f.write("    - Average head angular speed\n")
+        f.write("    - Cumulative head rotation\n")
+        f.write("    - Cumulative vertical/horizontal rotation\n")
+        f.write("    - Viewing sphere coverage\n")
+        f.write("  • Effect sizes calculated using correlation coefficient r = Z/√N\n")
         f.write("  • Significance threshold: α = 0.05\n")
-        f.write("  • Improvement analysis uses one-tailed tests to test if improvements > 0\n")
-    
+        f.write("  • Descriptive statistics use median and MAD (Median Absolute Deviation)\n")
+
     print(f"[info] Report written to: {report_path}")
 
 
@@ -844,7 +812,7 @@ def merge_hmd_data_to_master_report(hmd_csv_path: Path, master_report_path: Path
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Statistical analysis of HMD motion data"
+        description="Median-based statistical analysis of HMD motion data"
     )
     parser.add_argument(
         "--input_csv",
@@ -855,7 +823,7 @@ def main():
     parser.add_argument(
         "--output_dir",
         type=Path,
-        default=Path(__file__).parent / "hmd_motion_analysis",
+        default=Path(__file__).parent / "hmd_motion_analysis_median",
         help="Output directory for results",
     )
     parser.add_argument(
@@ -876,10 +844,10 @@ def main():
         help="Path to master fog/no-fog report CSV file",
     )
     args = parser.parse_args()
-    
+
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Load data
     print(f"[info] Loading data from: {args.input_csv}")
     df = load_data(args.input_csv)
@@ -889,31 +857,31 @@ def main():
         after = len(df)
         print(f"[info] Excluded participants {args.exclude_participant}; rows: {before} -> {after}")
     print(f"[info] Loaded {len(df)} sessions")
-    
+
     # Perform statistical tests
-    print("[info] Performing statistical tests...")
+    print("[info] Performing median-based statistical tests...")
     stats_df = perform_statistical_tests(df)
-    
+
     # Save statistics table
     stats_csv_path = args.output_dir / "statistical_results.csv"
     stats_df.to_csv(stats_csv_path, index=False)
     print(f"[info] Statistical results saved to: {stats_csv_path}")
-    
+
     # Create visualizations
     print("[info] Creating visualizations...")
     create_box_plots(df, args.output_dir)
     print("[info] Created box plots")
-    
+
     create_violin_plots(df, args.output_dir)
     print("[info] Created violin plots")
-    
+
     create_summary_bar_chart(stats_df, args.output_dir)
     print("[info] Created summary bar chart")
-    
+
     # Create paired participant plots if participant info available
     create_paired_plots(df, args.output_dir)
     print("[info] Created paired participant plots")
-    
+
     # Analyze improvements (fog - nofog)
     print("[info] Analyzing improvements (Fog - NoFog)...")
     improvements_df = analyze_improvements(df, args.output_dir)
@@ -924,19 +892,18 @@ def main():
         print("[info] Created improvement visualizations")
     else:
         print("[warn] No improvement analysis performed (missing participant info or metrics)")
-    
+
     # Generate report
     print("[info] Generating statistical report...")
     generate_report(stats_df, df, improvements_df, args.output_dir)
-    
+
     # Optionally merge HMD data into master report
     if args.merge_to_master:
         print("[info] Merging HMD data into master report...")
         merge_hmd_data_to_master_report(args.input_csv, args.master_report)
 
-    print(f"\n[info] Analysis complete! Results saved to: {args.output_dir}")
+    print(f"\n[info] Median-based analysis complete! Results saved to: {args.output_dir}")
 
 
 if __name__ == "__main__":
     main()
-

@@ -36,9 +36,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Tuple, Iterable, Optional, Any
+import multiprocessing
 
 import numpy as np
 import open3d as o3d
@@ -231,16 +234,21 @@ def count_components(vertex_adj: Dict[int, List[int]]) -> int:
 
 def compute_vertex_normals(mesh: o3d.geometry.TriangleMesh) -> np.ndarray:
     """Ensure vertex normals exist and return as np.ndarray."""
-    mesh = o3d.geometry.TriangleMesh(mesh)  # copy
-    mesh.compute_vertex_normals()
-    return np.asarray(mesh.vertex_normals)
+    local_mesh = o3d.geometry.TriangleMesh(mesh)  # copy
+    local_mesh.compute_vertex_normals()
+    v_normals = np.asarray(local_mesh.vertex_normals)
+    # Explicitly drop temporary mesh to help GC with large geometries
+    del local_mesh
+    return v_normals
 
 
 def compute_triangle_normals(mesh: o3d.geometry.TriangleMesh) -> np.ndarray:
     """Ensure triangle normals exist and return as np.ndarray."""
-    mesh = o3d.geometry.TriangleMesh(mesh)  # copy
-    mesh.compute_triangle_normals()
-    return np.asarray(mesh.triangle_normals)
+    local_mesh = o3d.geometry.TriangleMesh(mesh)  # copy
+    local_mesh.compute_triangle_normals()
+    t_normals = np.asarray(local_mesh.triangle_normals)
+    del local_mesh
+    return t_normals
 
 
 def compute_raw_metrics_for_mesh(path: Path, name: str) -> RawMeshMetrics:
@@ -400,6 +408,12 @@ def compute_raw_metrics_for_mesh(path: Path, name: str) -> RawMeshMetrics:
     else:
         uncolored_vertex_ratio = 1.0
         color_gradient_stddev = 0.0
+
+    # Help GC by removing large intermediate arrays and mesh references
+    del vertices, triangles, edge_to_faces, vertex_adj, counts, densities, flat, non_zero
+    del v_normals, t_normals
+    del mesh
+    gc.collect()
 
     return RawMeshMetrics(
         name=name,
@@ -831,6 +845,133 @@ def write_pairwise_reports(
 
 
 # -----------------------------------------------------------------------------
+# Progressive master CSV updates (fog / no-fog report)
+# -----------------------------------------------------------------------------
+
+
+def update_master_fog_report(
+    master_csv: Path,
+    scores: List[QualityScores],
+    pair_meta: List[Dict[str, str]],
+) -> None:
+    """
+    Progressively write per-mesh and relative metrics back into
+    master_fog_no_fog_report.csv.
+
+    This function is intended to be called repeatedly as more meshes are
+    evaluated. It will:
+      - Fill *_evaluate_quality_score_placeholder with Q_norm
+      - Add comprehensive quality metrics for both fog and nofog:
+        - Raw scores (Q_raw) and normalized scores (Q_norm)
+        - All sub-scores: S_shape, S_topology, S_bonuses, S_geom, S_smooth, S_complete, S_color
+      - Maintain / create a relative delta column: relative_quality_delta_nofog_minus_fog
+    Only rows for which both fog and no-fog meshes have been evaluated are
+    updated; other rows are left untouched.
+    """
+    if not master_csv.exists():
+        # Nothing to update (defensive; should exist in --from-csv mode)
+        return
+
+    # Fast lookup for scores and pair metadata
+    scores_by_name: Dict[str, QualityScores] = {s.name: s for s in scores}
+    meta_index: Dict[Tuple[str, str], Dict[str, str]] = {}
+    for m in pair_meta:
+        participant = (m.get("participant") or "").strip()
+        pair_id = (m.get("pair_id") or "").strip()
+        if participant and pair_id:
+            meta_index[(participant, pair_id)] = m
+
+    # Read entire CSV into memory, update rows in-place, then rewrite.
+    with master_csv.open("r", newline="") as f:
+        reader = csv.DictReader(f)
+        rows: List[Dict[str, Any]] = list(reader)
+        fieldnames = list(reader.fieldnames or [])
+
+    # Define all the quality metric columns we want to add
+    quality_columns = [
+        "Q_raw", "Q_norm",  # Overall scores
+        "S_geom", "S_smooth", "S_complete", "S_color",  # Main sub-scores
+        "S_shape", "S_topology", "S_bonuses"  # Detailed sub-scores
+    ]
+
+    # Add columns for both fog and nofog conditions
+    new_columns = []
+    for condition in ["fog", "nofog"]:
+        for col in quality_columns:
+            new_col = f"{condition}_{col}"
+            if new_col not in fieldnames:
+                fieldnames.append(new_col)
+                new_columns.append(new_col)
+
+    delta_col = "relative_quality_delta_nofog_minus_fog"
+    if delta_col not in fieldnames:
+        fieldnames.append(delta_col)
+        new_columns.append(delta_col)
+
+    for row in rows:
+        participant = (row.get("participant") or "").strip()
+        pair_id = (row.get("pair_id") or "").strip()
+        meta = meta_index.get((participant, pair_id))
+        if not meta:
+            continue
+
+        fog_name = meta.get("fog_name") or ""
+        nofog_name = meta.get("nofog_name") or ""
+        fog_score = scores_by_name.get(fog_name)
+        nofog_score = scores_by_name.get(nofog_name)
+
+        # Only update if we have both sides evaluated so far
+        if fog_score is None or nofog_score is None:
+            continue
+
+        fog_q_norm = fog_score.Q_norm
+        nofog_q_norm = nofog_score.Q_norm
+        delta = nofog_q_norm - fog_q_norm
+
+        # Fill existing placeholder columns with the normalized scores (backward compatibility)
+        if "fog_evaluate_quality_score_placeholder" in row:
+            row["fog_evaluate_quality_score_placeholder"] = f"{fog_q_norm:.6f}"
+        if "nofog_evaluate_quality_score_placeholder" in row:
+            row["nofog_evaluate_quality_score_placeholder"] = f"{nofog_q_norm:.6f}"
+
+        # Fill comprehensive quality metrics for fog condition
+        row["fog_Q_raw"] = f"{fog_score.Q_raw:.6f}"
+        row["fog_Q_norm"] = f"{fog_score.Q_norm:.6f}"
+        row["fog_S_geom"] = f"{fog_score.S_geom:.6f}"
+        row["fog_S_smooth"] = f"{fog_score.S_smooth:.6f}"
+        row["fog_S_complete"] = f"{fog_score.S_complete:.6f}"
+        row["fog_S_color"] = f"{fog_score.S_color:.6f}"
+        row["fog_S_shape"] = f"{fog_score.S_shape:.6f}"
+        row["fog_S_topology"] = f"{fog_score.S_topology:.6f}"
+        row["fog_S_bonuses"] = f"{fog_score.S_bonuses:.6f}"
+
+        # Fill comprehensive quality metrics for nofog condition
+        row["nofog_Q_raw"] = f"{nofog_score.Q_raw:.6f}"
+        row["nofog_Q_norm"] = f"{nofog_score.Q_norm:.6f}"
+        row["nofog_S_geom"] = f"{nofog_score.S_geom:.6f}"
+        row["nofog_S_smooth"] = f"{nofog_score.S_smooth:.6f}"
+        row["nofog_S_complete"] = f"{nofog_score.S_complete:.6f}"
+        row["nofog_S_color"] = f"{nofog_score.S_color:.6f}"
+        row["nofog_S_shape"] = f"{nofog_score.S_shape:.6f}"
+        row["nofog_S_topology"] = f"{nofog_score.S_topology:.6f}"
+        row["nofog_S_bonuses"] = f"{nofog_score.S_bonuses:.6f}"
+
+        # Optionally fill report path placeholders with the batch CSV path
+        # (kept simple: point to the global quality_scores.csv in analysis dir)
+        if "fog_evaluate_report_path_placeholder" in row:
+            row["fog_evaluate_report_path_placeholder"] = "analysis/mesh_quality_batch/quality_scores.csv"
+        if "nofog_evaluate_report_path_placeholder" in row:
+            row["nofog_evaluate_report_path_placeholder"] = "analysis/mesh_quality_batch/quality_scores.csv"
+
+        row[delta_col] = f"{delta:.6f}"
+
+    with master_csv.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+# -----------------------------------------------------------------------------
 # CLI
 # -----------------------------------------------------------------------------
 
@@ -965,6 +1106,22 @@ def load_pairs_from_csv(csv_path: Path) -> List[Tuple[Path, Path, str, str]]:
     return pairs
 
 
+def _process_single_mesh_worker(mesh_data: Tuple[Path, str]) -> RawMeshMetrics:
+    """
+    Worker function for processing a single mesh in parallel.
+    Must be at module level for multiprocessing pickling.
+    """
+    path, name = mesh_data
+    print(f"[Info] Processing mesh: {name} ({path})")
+    try:
+        raw = compute_raw_metrics_for_mesh(path, name)
+        print(f"[Info] Completed processing: {name}")
+        return raw
+    except Exception as e:
+        print(f"[Error] Failed to process mesh {name}: {e}")
+        raise
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate intrinsic quality of FBX/PLY meshes (geometry, smoothness, completeness, color).",
@@ -1024,6 +1181,14 @@ Examples:
         type=Path,
         default=Path("analysis/mesh_quality_batch"),
         help="Output directory for batch artifacts (plots, pairwise summary).",
+    )
+
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help=f"Number of parallel workers for mesh processing. "
+             f"Defaults to CPU count ({multiprocessing.cpu_count()}). Use 1 for sequential processing.",
     )
 
     return parser.parse_args()
@@ -1103,12 +1268,74 @@ def main() -> None:
     if not mesh_paths:
         raise SystemExit("No meshes provided. Use positional arguments, --pair, or --from-csv.")
 
-    # Compute raw metrics for all meshes
+    # Determine number of workers
+    num_workers = args.num_workers
+    if num_workers is None:
+        num_workers = multiprocessing.cpu_count()
+    elif num_workers <= 0:
+        num_workers = 1
+
+    print(f"[Info] Using {num_workers} worker(s) for parallel mesh processing")
+
+    # Compute raw metrics for all meshes (parallel processing)
     raw_list: List[RawMeshMetrics] = []
-    for path, name in mesh_paths:
-        print(f"[Info] Computing raw metrics for {name} ({path})")
-        raw = compute_raw_metrics_for_mesh(path, name)
-        raw_list.append(raw)
+
+    if num_workers == 1:
+        # Sequential processing (original behavior)
+        print("[Info] Using sequential processing")
+        for idx, (path, name) in enumerate(mesh_paths, start=1):
+            print(f"[Info] Computing raw metrics for {name} ({path})")
+            raw = compute_raw_metrics_for_mesh(path, name)
+            raw_list.append(raw)
+
+            # Progressive batch scoring and CSV updates to keep
+            # master_fog_no_fog_report.csv in sync as we go.
+            scores_so_far = compute_quality_scores(raw_list)
+            # Only meaningful when we are in pair / from-csv modes
+            if args.from_csv is not None and pair_meta:
+                try:
+                    update_master_fog_report(args.from_csv, scores_so_far, pair_meta)
+                except Exception as exc:
+                    print(f"[Warning] Failed to update master fog report after mesh {idx}: {exc}")
+    else:
+        # Parallel processing
+        print(f"[Info] Processing {len(mesh_paths)} meshes in parallel using {num_workers} workers")
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            # Submit all tasks
+            future_to_mesh = {
+                executor.submit(_process_single_mesh_worker, mesh_data): mesh_data
+                for mesh_data in mesh_paths
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_mesh):
+                mesh_data = future_to_mesh[future]
+                try:
+                    raw = future.result()
+                    raw_list.append(raw)
+                    print(f"[Info] Completed processing: {raw.name}")
+
+                    # Progressive batch scoring and CSV updates
+                    scores_so_far = compute_quality_scores(raw_list)
+                    # Only meaningful when we are in pair / from-csv modes
+                    if args.from_csv is not None and pair_meta:
+                        try:
+                            update_master_fog_report(args.from_csv, scores_so_far, pair_meta)
+                        except Exception as exc:
+                            print(f"[Warning] Failed to update master fog report: {exc}")
+
+                    # Force garbage collection to prevent memory buildup
+                    gc.collect()
+
+                except Exception as exc:
+                    path, name = mesh_data
+                    print(f"[Error] Mesh {name} generated an exception: {exc}")
+                    raise
+
+        print(f"[Info] All {len(mesh_paths)} meshes processed in parallel")
+
+        # Encourage Python to release memory between large meshes
+        gc.collect()
 
     # Compute batch-normalized quality scores
     scores = compute_quality_scores(raw_list)

@@ -58,12 +58,51 @@ def read_mapping(csv_path: Path) -> List[Dict[str, str]]:
     if not csv_path.exists():
         raise FileNotFoundError(f"Mapping CSV not found: {csv_path}")
     with csv_path.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        # Detect delimiter (support semicolon-separated files)
+        sample = f.read(1024)
+        f.seek(0)
+        if ";" in sample and "," not in sample.splitlines()[0]:
+            reader = csv.DictReader(f, delimiter=";")
+        else:
+            reader = csv.DictReader(f)
+        fieldnames = set(reader.fieldnames or [])
+
+        # Case 1: Expected mapping format
         required = {"Name", "NoFog", "Fog"}
-        missing = required - set(reader.fieldnames or [])
-        if missing:
-            raise ValueError(f"Mapping CSV missing required columns: {missing}")
-        return [row for row in reader]
+        missing = required - fieldnames
+        if not missing:
+            return [row for row in reader]
+
+        # Case 2: Fallback to master_fog_no_fog_report-style format
+        # Columns: participant, condition, session_id, paired_session_id
+        master_fields = {"participant", "condition", "session_id", "paired_session_id"}
+        if master_fields.issubset(fieldnames):
+            rows = [row for row in reader]
+            # Build mapping: take NoFog rows and pair with their Fog partner
+            mapping_rows: List[Dict[str, str]] = []
+            for row in rows:
+                if (row.get("condition") or "").strip() != "NoFog":
+                    continue
+                participant = (row.get("participant") or "").strip()
+                nofog_id = (row.get("session_id") or "").strip()
+                fog_id = (row.get("paired_session_id") or "").strip()
+                if not participant or not nofog_id or not fog_id:
+                    continue
+                mapping_rows.append({"Name": participant, "NoFog": nofog_id, "Fog": fog_id})
+            if not mapping_rows:
+                raise ValueError(
+                    "Could not derive mapping rows from master report format "
+                    "(need participant, condition=NoFog, session_id, paired_session_id)."
+                )
+            return mapping_rows
+
+        # If neither format matches, raise a clear error
+        raise ValueError(
+            "Mapping CSV missing required columns. Expected either:\n"
+            "  - Name, NoFog, Fog\n"
+            "  - or master report style with participant, condition, session_id, paired_session_id\n"
+            f"Missing: {required - fieldnames}"
+        )
 
 
 def _parse_pipeline_runtime(runtime_path: Path) -> Dict[str, Optional[str]]:

@@ -15,19 +15,19 @@ STATISTICAL RESULTS
 
 NON-SIGNIFICANT DIFFERENCES (p >= 0.05):
 --------------------------------------------------------------------------------
-Average Body Speed: p=0.2617, Cohen's d=-0.340 (small)
-Average Head Angular Speed: p=0.0604, Cohen's d=0.482 (small)
-Cumulative Head Rotation: p=0.0622, Cohen's d=0.477 (small)
-Cumulative Horizontal Rotation (Yaw): p=0.0543, Cohen's d=0.500 (medium)
-Cumulative Vertical Rotation (Pitch): p=0.0895, Cohen's d=0.412 (small)
-Net Body Displacement: p=0.8784, Cohen's d=0.045 (negligible)
+Average Body Speed: p=0.2775, Cohen's d=-0.328 (small)
+Average Head Angular Speed: p=0.0582, Cohen's d=0.489 (small)
+Cumulative Head Rotation: p=0.0697, Cohen's d=0.457 (small)
+Cumulative Horizontal Rotation (Yaw): p=0.0685, Cohen's d=0.460 (small)
+Cumulative Vertical Rotation (Pitch): p=0.1002, Cohen's d=0.391 (small)
+Net Body Displacement: p=0.8130, Cohen's d=0.070 (negligible)
 Peak Body Speed: p=0.9782, Cohen's d=-0.008 (negligible)
 Peak Head Angular Speed: p=0.3126, Cohen's d=0.304 (small)
 Pitch Range: p=0.8394, Cohen's d=-0.051 (negligible)
 Roll Range: p=0.2734, Cohen's d=-0.021 (negligible)
-Total Body Distance: p=0.3204, Cohen's d=-0.299 (small)
-Viewing Sphere Coverage: p=0.1745, Cohen's d=0.281 (small)
-Viewing Sphere Coverage (with FOV): p=0.0550, Cohen's d=0.498 (small)
+Total Body Distance: p=0.2890, Cohen's d=-0.320 (small)
+Viewing Sphere Coverage: p=0.2183, Cohen's d=0.232 (small)
+Viewing Sphere Coverage (with FOV): p=0.0565, Cohen's d=0.494 (small)
 Yaw Range: p=0.3396, Cohen's d=-0.326 (small)
 
 ================================================================================
@@ -43,63 +43,63 @@ This section tests directional hypotheses that Fog > NoFog for:
 One-tailed tests are used to test if improvements are significantly > 0.
 
 Average Head Angular Speed (rad/s):
-  Mean improvement: 0.227 rad/s
-  Improvement percentage: 21.7% relative to NoFog
+  Mean improvement: 0.230 rad/s
+  Improvement percentage: 22.0% relative to NoFog
   Range: [-0.362, 1.187] rad/s
   Median: 0.081 rad/s
   Test: One-sample t-test (one-tailed: improvement > 0)
-  Statistic: 1.670, p=0.0604 (not significant)
-  Effect size: Cohen's d=0.482 (small)
+  Statistic: 1.692, p=0.0582 (not significant)
+  Effect size: Cohen's d=0.489 (small)
   ✗ No significant improvement detected
 
 Cumulative Head Rotation (rad):
-  Mean improvement: 4.272 rad
-  Improvement percentage: 23.9% relative to NoFog
+  Mean improvement: 4.125 rad
+  Improvement percentage: 22.9% relative to NoFog
   Range: [-6.003, 25.709] rad
   Median: 1.391 rad
   Test: One-sample t-test (one-tailed: improvement > 0)
-  Statistic: 1.652, p=0.0622 (not significant)
-  Effect size: Cohen's d=0.477 (small)
+  Statistic: 1.583, p=0.0697 (not significant)
+  Effect size: Cohen's d=0.457 (small)
   ✗ No significant improvement detected
 
 Cumulative Vertical Rotation (Pitch) (rad):
-  Mean improvement: 2.936 rad
-  Improvement percentage: 21.1% relative to NoFog
+  Mean improvement: 2.825 rad
+  Improvement percentage: 20.1% relative to NoFog
   Range: [-6.477, 17.576] rad
   Median: -0.490 rad
   Test: One-sample t-test (one-tailed: improvement > 0)
-  Statistic: 1.427, p=0.0895 (not significant)
-  Effect size: Cohen's d=0.412 (small)
+  Statistic: 1.355, p=0.1002 (not significant)
+  Effect size: Cohen's d=0.391 (small)
   ✗ No significant improvement detected
 
 Cumulative Horizontal Rotation (Yaw) (rad):
-  Mean improvement: 4.812 rad
-  Improvement percentage: 29.4% relative to NoFog
+  Mean improvement: 4.514 rad
+  Improvement percentage: 27.1% relative to NoFog
   Range: [-9.380, 27.876] rad
   Median: 4.416 rad
   Test: One-sample t-test (one-tailed: improvement > 0)
-  Statistic: 1.734, p=0.0543 (not significant)
-  Effect size: Cohen's d=0.500 (medium)
+  Statistic: 1.594, p=0.0685 (not significant)
+  Effect size: Cohen's d=0.460 (small)
   ✗ No significant improvement detected
 
 Viewing Sphere Coverage (%):
-  Mean improvement: 0.099 %
-  Improvement percentage: 6.9% relative to NoFog
+  Mean improvement: 0.084 %
+  Improvement percentage: 5.8% relative to NoFog
   Range: [-0.740, 0.863] %
   Median: 0.164 %
   Test: One-sample t-test (one-tailed: improvement > 0)
-  Statistic: 0.975, p=0.1745 (not significant)
-  Effect size: Cohen's d=0.281 (small)
+  Statistic: 0.805, p=0.2183 (not significant)
+  Effect size: Cohen's d=0.232 (small)
   ✗ No significant improvement detected
 
 Viewing Sphere Coverage (with FOV) (%):
-  Mean improvement: 8.550 %
-  Improvement percentage: 11.6% relative to NoFog
+  Mean improvement: 8.472 %
+  Improvement percentage: 11.5% relative to NoFog
   Range: [-33.795, 42.223] %
-  Median: 9.327 %
+  Median: 8.306 %
   Test: One-sample t-test (one-tailed: improvement > 0)
-  Statistic: 1.726, p=0.0550 (not significant)
-  Effect size: Cohen's d=0.498 (small)
+  Statistic: 1.710, p=0.0565 (not significant)
+  Effect size: Cohen's d=0.494 (small)
   ✗ No significant improvement detected
 
 ================================================================================
