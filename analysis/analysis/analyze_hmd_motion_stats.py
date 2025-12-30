@@ -2,12 +2,35 @@
 """
 Statistical analysis of HMD motion data comparing Fog vs NoFog conditions.
 
-Generates publication-quality visualizations and a comprehensive statistical report.
+This script performs comprehensive statistical analysis of head-mounted display (HMD) motion
+data, comparing user behavior between fog and no-fog experimental conditions. It generates
+publication-quality visualizations, statistical tests, and detailed reports.
 
-Usage:
-    python analysis/analyze_hmd_motion_stats.py \
-        --input_csv analysis/hmd_analysis.csv \
-        --output_dir analysis/hmd_motion_analysis
+Key features:
+- Paired statistical tests (t-tests, Wilcoxon) for comparing fog vs no-fog conditions
+- Analysis of body movement, head rotation, and viewing sphere coverage metrics
+- Automatic detection of paired participants for within-subject analysis
+- Generation of box plots, violin plots, bar charts, and improvement analysis
+- One-tailed tests for metrics expected to improve with fog (head movement, coverage)
+
+Console Usage Examples:
+    # Basic analysis with default paths
+    python analysis/analysis/analyze_hmd_motion_stats.py
+
+    # Specify custom input/output paths
+    python analysis/analysis/analyze_hmd_motion_stats.py \
+        --input_csv analysis/data/hmd_analysis.csv \
+        --output_dir analysis/hmd_motion_analysis_custom
+
+    # Exclude specific participants from analysis
+    python analysis/analysis/analyze_hmd_motion_stats.py \
+        --exclude-participant "Maria" \
+        --exclude-participant "John Doe"
+
+    # Merge results into master report
+    python analysis/analysis/analyze_hmd_motion_stats.py \
+        --merge-to-master \
+        --master-report analysis/data/master_fog_no_fog_report.csv
 """
 
 from __future__ import annotations
@@ -84,7 +107,7 @@ def perform_statistical_tests(df: pd.DataFrame) -> pd.DataFrame:
     results = []
     
     # Check if we have participant information for paired analysis
-    has_participants = "participant" in df.columns and df["participant"].notna().any()
+    has_participants = bool("participant" in df.columns and df["participant"].notna().any())
     
     if has_participants:
         print("[info] Participant information detected - using paired statistical tests")
@@ -257,7 +280,8 @@ def create_box_plots(df: pd.DataFrame, output_dir: Path) -> None:
     for idx, (metric_col, (display_name, unit)) in enumerate(available_metrics):
         ax = axes[idx]
         
-        plot_df = df[[metric_col, "condition"]].dropna()
+        temp_df = df[[metric_col, "condition"]].dropna()
+        plot_df = pd.DataFrame({"condition": temp_df["condition"], metric_col: temp_df[metric_col]})
         
         # Use seaborn boxplot for better styling
         sns.boxplot(
@@ -304,7 +328,8 @@ def create_violin_plots(df: pd.DataFrame, output_dir: Path) -> None:
     for idx, (metric_col, (display_name, unit)) in enumerate(available_metrics):
         ax = axes[idx]
         
-        plot_df = df[[metric_col, "condition"]].dropna()
+        temp_df = df[[metric_col, "condition"]].dropna()
+        plot_df = pd.DataFrame({"condition": temp_df["condition"], metric_col: temp_df[metric_col]})
         
         # Use seaborn violinplot for better styling
         sns.violinplot(
@@ -334,7 +359,7 @@ def create_violin_plots(df: pd.DataFrame, output_dir: Path) -> None:
 
 def create_paired_plots(df: pd.DataFrame, output_dir: Path) -> None:
     """Create paired plots showing individual participant changes between Fog and NoFog."""
-    if "participant" not in df.columns or df["participant"].isna().all():
+    if "participant" not in df.columns or bool(df["participant"].isna().all()):
         print("[warn] No participant information available - skipping paired plots")
         return
     
@@ -413,7 +438,7 @@ def analyze_improvements(df: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
     Analyze improvements (fog - nofog) for each participant.
     Focuses on coverage metrics where fog is expected to be better.
     """
-    if "participant" not in df.columns or df["participant"].isna().all():
+    if "participant" not in df.columns or bool(df["participant"].isna().all()):
         print("[warn] No participant information - skipping improvement analysis")
         return pd.DataFrame()
     
@@ -560,10 +585,12 @@ def analyze_improvements(df: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
         ax.grid(True, alpha=0.3, axis='x')
         
         # Add significance indicators
-        for i, (bar, p_val, mean_imp) in enumerate(zip(bars, p_values, mean_improvements)):
-            sig_text = '***' if p_val < 0.001 else '**' if p_val < 0.01 else '*' if p_val < 0.05 else 'ns'
-            ax.text(mean_imp + std_improvements[i] + 0.01 * max(mean_improvements),
-                   i, sig_text, va='center', fontsize=12, fontweight='bold')
+        if mean_improvements:  # Check if list is not empty
+            max_improvement = max(mean_improvements) if mean_improvements else 1.0
+            for i, (bar, p_val, mean_imp) in enumerate(zip(bars, p_values, mean_improvements)):
+                sig_text = '***' if p_val < 0.001 else '**' if p_val < 0.01 else '*' if p_val < 0.05 else 'ns'
+                ax.text(mean_imp + std_improvements[i] + 0.01 * max_improvement,
+                       i, sig_text, va='center', fontsize=12, fontweight='bold')
         
         plt.tight_layout()
         plt.savefig(output_dir / "improvements_summary.png")
@@ -617,7 +644,7 @@ def create_summary_bar_chart(stats_df: pd.DataFrame, output_dir: Path) -> None:
         bars = ax.bar(x, means, yerr=stds, capsize=5, color=colors, alpha=0.7, edgecolor="black")
         
         # Add significance indicator
-        if row["significant"]:
+        if row["significant"] and means and stds:  # Ensure lists are not empty
             max_val = max(means) + max(stds)
             ax.plot([0, 1], [max_val * 1.1, max_val * 1.1], "k-", linewidth=1)
             ax.plot([0, 0], [max_val * 1.05, max_val * 1.1], "k-", linewidth=1)
@@ -648,7 +675,7 @@ def generate_report(stats_df: pd.DataFrame, df: pd.DataFrame, improvements_df: p
         # Sample sizes
         fog_n = len(df[df["condition"] == "Fog"])
         nofog_n = len(df[df["condition"] == "NoFog"])
-        has_participants = "participant" in df.columns and df["participant"].notna().any()
+        has_participants = bool("participant" in df.columns and df["participant"].notna().any())
         
         f.write(f"Sample Sizes:\n")
         f.write(f"  Fog condition: {fog_n} sessions\n")

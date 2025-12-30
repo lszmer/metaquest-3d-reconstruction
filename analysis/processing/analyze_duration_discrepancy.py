@@ -1,6 +1,27 @@
 #!/usr/bin/env python3
 """
-Analyze why overall duration differs from individual modality durations.
+Analyze duration discrepancies between modalities in experiment sessions.
+
+This script investigates why overall recording duration may differ from individual
+modality durations (YUV, RGB, depth, HMD) within the same session. It helps identify
+timing synchronization issues and data collection problems.
+
+Key features:
+- Compares overall session duration against individual modality durations
+- Analyzes timestamp ranges across different data sources
+- Identifies potential synchronization issues between cameras and HMD
+- Helps debug data collection and processing pipeline problems
+
+Console Usage Examples:
+    # Run the hardcoded analysis for specific test sessions
+    python analysis/processing/analyze_duration_discrepancy.py
+
+    # To analyze different sessions, modify the hardcoded paths in the script:
+    # analyze_session(Path("/path/to/your/session"))
+    # analyze_session(Path("/path/to/another/session"))
+
+Note: This script currently analyzes hardcoded session paths. To analyze different
+sessions, modify the session paths in the main() section of the script.
 """
 
 import csv

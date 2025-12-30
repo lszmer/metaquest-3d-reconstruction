@@ -1,23 +1,44 @@
-"""Summarize body and head movement from Quest HMD pose logs.
+"""
+Compute HMD (Head-Mounted Display) motion statistics from Quest pose logs.
 
-Default mode: analyze one explicit capture directory.
-Optional mode: auto-iterate captures under /Volumes/Intenso for Fog/NoFog/All.
+This script processes HMD pose tracking data to calculate comprehensive body and head
+movement statistics. It can analyze individual capture sessions or batch process
+multiple sessions across different experimental conditions.
 
-Examples:
-    # Single capture (default style)
-    python analysis/compute_hmd_motion_stats.py \
+Key features:
+- Computes body movement metrics: distance traveled, net displacement, speed (avg/peak)
+- Calculates head rotation metrics: cumulative rotation, angular speed, yaw/pitch/roll ranges
+- Analyzes viewing sphere coverage: percentage of 3D space explored by head movements
+- Supports both individual session analysis and batch processing modes
+- Generates per-session CSV summaries and optional aggregate reports
+- Integrates with master fog/no-fog experiment reports
+
+Console Usage Examples:
+    # Analyze a single capture session
+    python analysis/computation/compute_hmd_motion_stats.py \
         --session_dir /Volumes/Intenso/NoFog/20251209_153834
 
-    # Sweep all NoFog captures under /Volumes/Intenso/NoFog
-    python analysis/compute_hmd_motion_stats.py --mode NoFog
+    # Batch process all NoFog captures
+    python analysis/computation/compute_hmd_motion_stats.py \
+        --mode NoFog \
+        --aggregate_csv analysis/data/hmd_nofog_summary.csv
 
-    # Sweep Fog and NoFog captures
-    python analysis/compute_hmd_motion_stats.py --mode All
+    # Batch process all Fog captures
+    python analysis/computation/compute_hmd_motion_stats.py \
+        --mode Fog \
+        --aggregate_csv analysis/data/hmd_fog_summary.csv
 
-Each capture directory must contain an `hmd_poses.csv`.
-Per-capture summaries are written to:
-    <capture_dir>/analysis/hmd_movement_summary.csv
-You can additionally emit an aggregate CSV via --aggregate_csv.
+    # Process all captures (Fog + NoFog) and integrate with master report
+    python analysis/computation/compute_hmd_motion_stats.py \
+        --mode All \
+        --aggregate_csv analysis/data/hmd_all_summary.csv \
+        --master_report_csv analysis/data/master_fog_no_fog_report.csv
+
+    # Use custom root directory for data
+    python analysis/computation/compute_hmd_motion_stats.py \
+        --mode All \
+        --root_dir /custom/data/path \
+        --aggregate_csv /output/hmd_stats.csv
 """
 
 from __future__ import annotations

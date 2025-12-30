@@ -1,7 +1,34 @@
 """
-Mesh loading utilities for FBX and PLY files.
+Mesh loading utilities for 3D mesh processing and evaluation.
 
-Provides a unified interface for loading meshes regardless of format.
+This module provides a unified interface for loading and processing 3D mesh files
+in different formats (FBX, PLY). It handles format-specific loading requirements
+and provides utilities for converting meshes to point clouds for analysis.
+
+Key features:
+- Unified mesh loading interface for FBX and PLY formats
+- Automatic format detection based on file extension
+- FBX support using Aspose.3D library (optional dependency)
+- PLY support using Open3D library
+- Mesh to point cloud conversion utilities
+- Error handling for unsupported formats and missing files
+
+Supported formats:
+- FBX: Autodesk FBX format (requires aspose-3d package)
+- PLY: Polygon File Format (supported by Open3D)
+
+Dependencies:
+- open3d: Core 3D processing library
+- aspose-3d: FBX file support (optional, install with: pip install aspose-3d)
+
+Usage:
+    from analysis.computation.mesh_loader import load_mesh, mesh_to_point_cloud
+
+    # Load a mesh from file
+    mesh = load_mesh(Path("model.fbx"))
+
+    # Convert mesh to point cloud for analysis
+    point_cloud = mesh_to_point_cloud(mesh, num_points=50000)
 """
 
 import tempfile

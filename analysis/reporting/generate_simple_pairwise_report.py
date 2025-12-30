@@ -1,6 +1,36 @@
 #!/usr/bin/env python3
 """
-Generate simple pairwise HTML report focusing on basic geometric metrics.
+Generate simple pairwise HTML report for mesh quality comparison.
+
+This script creates an interactive HTML report comparing fog vs no-fog mesh
+quality metrics on a per-participant basis. It focuses on basic geometric
+properties and provides visual comparisons for easy interpretation.
+
+Key features:
+- Generates interactive HTML report with embedded charts
+- Compares fog vs no-fog mesh quality for each participant
+- Shows basic geometric metrics (vertices, triangles, components, etc.)
+- Creates side-by-side comparison tables and plots
+- Includes participant identification and session information
+
+Console Usage Examples:
+    # Generate report using default paths
+    python analysis/reporting/generate_simple_pairwise_report.py
+
+    # Specify custom quality scores and output location
+    python analysis/reporting/generate_simple_pairwise_report.py \
+        --quality-scores analysis/mesh_quality_batch/quality_scores.csv \
+        --output analysis/reports/simple_pairwise_comparison.html
+
+    # Use custom master report for participant names
+    python analysis/reporting/generate_simple_pairwise_report.py \
+        --master-report analysis/data/master_fog_no_fog_report.csv \
+        --output analysis/results/participant_comparison.html
+
+    # Generate report from different quality analysis
+    python analysis/reporting/generate_simple_pairwise_report.py \
+        --quality-scores /data/experiment2/quality_scores.csv \
+        --output /results/experiment2/simple_report.html
 """
 
 import pandas as pd

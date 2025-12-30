@@ -1,9 +1,39 @@
 #!/usr/bin/env python3
 """
-Diagnostic script to investigate depth map conversion issues.
+Investigate depth map conversion and processing issues.
 
-This script analyzes raw depth files, their descriptors, and the resulting
-linear depth maps to identify potential issues in the conversion process.
+This diagnostic script analyzes raw depth data files, descriptors, and converted
+linear depth maps to identify potential issues in the depth processing pipeline.
+It helps debug depth sensor data quality and conversion problems.
+
+Key features:
+- Analyzes raw depth file integrity and statistics (min/max/mean values)
+- Validates depth descriptors and metadata consistency
+- Compares raw vs processed depth map characteristics
+- Identifies corrupted or missing depth data
+- Supports investigation of specific time ranges and camera sides
+- Generates detailed diagnostic reports for troubleshooting
+
+Console Usage Examples:
+    # Investigate depth issues for a specific session (left camera)
+    python analysis/processing/investigate_depth_issues.py \
+        /Volumes/Intenso/Fog/20251209_144306
+
+    # Analyze right camera depth data
+    python analysis/processing/investigate_depth_issues.py \
+        /Volumes/Intenso/NoFog/20251212_191211 \
+        --side right
+
+    # Investigate specific timestamp range
+    python analysis/processing/investigate_depth_issues.py \
+        /Volumes/Intenso/Fog/20251209_144306 \
+        --start-timestamp 1700000000000 \
+        --end-timestamp 1700000010000
+
+    # Analyze depth data from custom session directory
+    python analysis/processing/investigate_depth_issues.py \
+        /custom/path/to/session \
+        --side left
 """
 
 import argparse

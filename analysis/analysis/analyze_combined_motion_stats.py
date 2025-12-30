@@ -1,15 +1,33 @@
 #!/usr/bin/env python3
 """
-Combined HMD and Controller motion analysis for robust distance/activity metrics.
+Combined HMD and Controller motion analysis for robust activity metrics.
 
-This script combines HMD body movement and controller hand movement data to create
-more robust metrics for analyzing user activity and motion patterns.
+This script integrates head-mounted display (HMD) body movement data with controller
+(hand tracking) data to create comprehensive metrics for analyzing user activity and
+motion patterns across fog vs no-fog experimental conditions.
 
-Usage:
-    python analysis/analyze_combined_motion_stats.py \
-        --hmd_csv analysis/hmd_analysis.csv \
-        --controller_csv analysis/controller_analysis.csv \
-        --output_dir analysis/combined_motion_analysis
+Key features:
+- Combines body movement (HMD) with hand movement (controllers) for holistic activity analysis
+- Creates robust distance and activity metrics by cross-validating multiple data sources
+- Generates combined statistical comparisons between experimental conditions
+- Produces integrated visualizations showing relationships between different motion types
+- Particularly useful for understanding overall user engagement and exploration behavior
+
+Console Usage Examples:
+    # Basic combined motion analysis with default paths
+    python analysis/analysis/analyze_combined_motion_stats.py
+
+    # Specify custom input files and output directory
+    python analysis/analysis/analyze_combined_motion_stats.py \
+        --hmd_csv analysis/data/hmd_analysis.csv \
+        --controller_csv analysis/data/controller_analysis.csv \
+        --output_dir analysis/combined_analysis_results
+
+    # Analyze specific datasets from different locations
+    python analysis/analysis/analyze_combined_motion_stats.py \
+        --hmd_csv /data/experiment1/hmd_stats.csv \
+        --controller_csv /data/experiment1/controller_stats.csv \
+        --output_dir /results/experiment1/combined/
 """
 
 from __future__ import annotations
@@ -57,9 +75,9 @@ def load_and_merge_data(hmd_csv: Path, controller_csv: Path) -> pd.DataFrame:
     
     # Aggregate controller data per session (average left/right hands)
     controller_hand_df = controller_df[controller_df["hand"].notna()].copy()
-    controller_interhand_df = controller_df[
-        controller_df["avg_inter_hand_distance_m"].notna()
-    ].drop_duplicates(subset=["capture_name", "capture_path"], keep="first").copy()
+    filtered_df = controller_df[controller_df["avg_inter_hand_distance_m"].notna()]
+    # Remove duplicates by grouping and taking first occurrence
+    controller_interhand_df = filtered_df.groupby(["capture_name", "capture_path"], as_index=False).first().copy()
     
     # Aggregate hand metrics (average of left and right)
     hand_agg = controller_hand_df.groupby(["capture_name", "capture_path", "participant", "condition"]).agg({
@@ -316,7 +334,8 @@ def create_visualizations(df: pd.DataFrame, stats_df: pd.DataFrame, output_dir: 
     
     for idx, metric_col in enumerate(available_metrics):
         ax = axes[idx]
-        plot_df = df[[metric_col, "condition"]].dropna()
+        temp_df = df[[metric_col, "condition"]].dropna()
+        plot_df = pd.DataFrame({"condition": temp_df["condition"], metric_col: temp_df[metric_col]})
         
         sns.boxplot(
             data=plot_df,

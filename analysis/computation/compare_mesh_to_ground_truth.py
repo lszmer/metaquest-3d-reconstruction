@@ -1,20 +1,52 @@
 #!/usr/bin/env python3
 """
-Compare a reconstructed mesh scan against a ground truth mesh.
+Compare reconstructed 3D mesh scans against ground truth models.
 
-This script computes various metrics to evaluate how well a scan matches
-the ground truth, including:
-- Chamfer Distance
-- Hausdorff Distance
-- Point-to-Surface Distance
-- F-score (precision/recall)
-- Volume metrics
+This script evaluates the accuracy of reconstructed 3D meshes by comparing them
+against ground truth reference models. It computes comprehensive geometric accuracy
+metrics and provides detailed visualizations of reconstruction quality.
 
-It also provides visualization capabilities:
-- Error heatmaps
-- Side-by-side comparison
-- Overlay visualization
-- Export to HTML/PLY with color-coded errors
+Key features:
+- Computes multiple distance metrics: Chamfer distance, Hausdorff distance, point-to-surface distance
+- Calculates precision/recall metrics: F-score at configurable distance thresholds
+- Analyzes volume differences: IoU (Intersection over Union) and volume ratios
+- Supports mesh alignment: center alignment and ICP (Iterative Closest Point) registration
+- Generates detailed visualizations: error heatmaps, side-by-side comparisons, overlays
+- Exports results in multiple formats: JSON metrics, PLY error visualizations
+
+Console Usage Examples:
+    # Basic comparison with single scan
+    python analysis/computation/compare_mesh_to_ground_truth.py \
+        --scan reconstructed_mesh.fbx \
+        --gt ground_truth.fbx
+
+    # Compare with custom distance threshold and point sampling
+    python analysis/computation/compare_mesh_to_ground_truth.py \
+        --scan scan.fbx \
+        --gt reference.fbx \
+        --threshold 0.01 \
+        --num-points 100000
+
+    # Compare fog vs no-fog scans against same ground truth
+    python analysis/computation/compare_mesh_to_ground_truth.py \
+        --fog-scan fog_reconstruction.fbx \
+        --no-fog-scan nofog_reconstruction.fbx \
+        --gt ground_truth.fbx
+
+    # Advanced comparison with alignment and custom output directory
+    python analysis/computation/compare_mesh_to_ground_truth.py \
+        --scan scan.fbx \
+        --gt reference.fbx \
+        --align icp \
+        --normalize-scale \
+        --output evaluation_results/
+
+    # Batch processing without interactive visualization
+    python analysis/computation/compare_mesh_to_ground_truth.py \
+        --scan scan.fbx \
+        --gt reference.fbx \
+        --no-interactive \
+        --output /batch/results/
 """
 
 import argparse

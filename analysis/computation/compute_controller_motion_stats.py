@@ -1,14 +1,31 @@
 #!/usr/bin/env python3
-"""Summarize hand controller movement from Quest controller pose logs.
+"""
+Compute controller/hand motion statistics from Quest controller pose logs.
 
-Processes all sessions listed in master_fog_no_fog_report.csv and computes
-motion statistics for both left and right controllers, including inter-hand
-coordination metrics.
+This script processes controller tracking data to calculate comprehensive hand movement
+statistics for both left and right controllers. It analyzes individual hand metrics
+and inter-hand coordination patterns across all sessions in the experiment.
 
-Example:
-    python analysis/compute_controller_motion_stats.py \\
-        --master-report analysis/master_fog_no_fog_report.csv \\
-        --output analysis/controller_analysis.csv
+Key features:
+- Computes per-hand metrics: distance traveled, speed, acceleration, workspace volume, jitter
+- Calculates inter-hand coordination: relative distance, movement correlation, synchronization
+- Processes all sessions listed in the master fog/no-fog experiment report
+- Generates comprehensive CSV output with all motion statistics
+- Supports both individual hand analysis and bimanual coordination metrics
+
+Console Usage Examples:
+    # Process all controller data using default paths
+    python analysis/computation/compute_controller_motion_stats.py
+
+    # Specify custom master report and output file
+    python analysis/computation/compute_controller_motion_stats.py \
+        --master-report analysis/data/master_fog_no_fog_report.csv \
+        --output analysis/data/controller_analysis.csv
+
+    # Process controller data from a different experiment
+    python analysis/computation/compute_controller_motion_stats.py \
+        --master-report /data/experiment2/master_report.csv \
+        --output /results/experiment2/controller_stats.csv
 """
 
 from __future__ import annotations

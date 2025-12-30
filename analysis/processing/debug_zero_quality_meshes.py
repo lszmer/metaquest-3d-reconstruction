@@ -1,7 +1,33 @@
 #!/usr/bin/env python3
 """
-Debug script to investigate why specific meshes get quality score 0.
-Evaluates the three problematic meshes with detailed output.
+Debug zero-quality mesh issues in 3D reconstruction pipeline.
+
+This diagnostic script investigates why certain reconstructed meshes receive
+a quality score of 0. It performs detailed analysis of mesh geometry, topology,
+and quality metrics to identify the root causes of poor reconstruction quality.
+
+Key features:
+- Analyzes detailed geometric properties (vertices, triangles, components)
+- Examines topological characteristics (manifold, watertight, boundary edges)
+- Evaluates shape quality metrics (aspect ratio, skewness, degenerate triangles)
+- Assesses surface smoothness and normal consistency
+- Provides comprehensive debugging output for quality score calculation
+
+Console Usage Examples:
+    # Run debug analysis on hardcoded problematic meshes
+    python analysis/processing/debug_zero_quality_meshes.py
+
+    # To debug different meshes, modify the hardcoded mesh list in main():
+    # meshes_to_debug = [
+    #     {
+    #         "name": "Your_Mesh_Name",
+    #         "path": Path("/path/to/your/mesh.fbx"),
+    #         "condition": "Fog"  # or "NoFog"
+    #     }
+    # ]
+
+Note: This script currently analyzes a hardcoded set of problematic meshes.
+Modify the mesh list in the main() function to debug different meshes.
 """
 
 import sys

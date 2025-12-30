@@ -1,9 +1,31 @@
 #!/usr/bin/env python3
 """
-Statistical analysis of mesh quality scores comparing Fog vs NoFog conditions.
+Statistical analysis of 3D mesh reconstruction quality scores comparing Fog vs NoFog conditions.
 
-Performs paired t-tests (with normality checks) to test the hypothesis that
-fog conditions produce higher quality scores than nofog conditions.
+This script analyzes the quality of reconstructed 3D meshes from the 3D reconstruction pipeline,
+comparing quality metrics between fog and no-fog experimental conditions. It performs
+paired statistical tests to determine if fog conditions lead to improved mesh quality.
+
+Key features:
+- Analyzes multiple quality metrics: geometry, smoothness, completeness, color accuracy
+- Performs paired statistical tests (t-tests, Wilcoxon) comparing fog vs no-fog conditions
+- Tests directional hypothesis that fog improves mesh quality (one-tailed tests)
+- Generates quality comparison reports and visualizations
+- Handles participant pairing for within-subject analysis
+
+Console Usage Examples:
+    # Basic mesh quality analysis with default paths
+    python analysis/analysis/analyze_mesh_quality_stats.py
+
+    # Specify custom quality scores file and output directory
+    python analysis/analysis/analyze_mesh_quality_stats.py \
+        --quality-scores analysis/mesh_quality_batch/quality_scores.csv \
+        --output-dir analysis/mesh_quality_analysis_results
+
+    # Analyze quality scores from a different experiment
+    python analysis/analysis/analyze_mesh_quality_stats.py \
+        --quality-scores /data/experiment2/mesh_quality.csv \
+        --output-dir /results/experiment2/quality_analysis/
 """
 
 import argparse

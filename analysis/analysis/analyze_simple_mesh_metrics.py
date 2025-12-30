@@ -1,12 +1,31 @@
 #!/usr/bin/env python3
 """
-Simple mesh quality analysis focusing on basic geometric metrics:
-- Vertex count
-- Triangle count
-- Component count (number of separate pieces)
-- Boundary edge ratio (indicator of holes/openings)
-- Degenerate triangles
-- Watertight status
+Simple geometric analysis of 3D mesh properties comparing Fog vs NoFog conditions.
+
+This script performs statistical analysis of basic geometric properties of reconstructed
+3D meshes, focusing on fundamental mesh characteristics rather than complex quality
+metrics. It compares these basic properties between fog and no-fog experimental conditions.
+
+Key features:
+- Analyzes basic geometric metrics: vertex/triangle counts, component count, boundary edges
+- Checks mesh integrity: watertight status, degenerate triangles
+- Performs paired statistical tests comparing fog vs no-fog conditions
+- Generates simple geometric comparison reports and visualizations
+- Useful for understanding fundamental differences in mesh structure
+
+Console Usage Examples:
+    # Basic geometric mesh analysis with default paths
+    python analysis/analysis/analyze_simple_mesh_metrics.py
+
+    # Specify custom quality scores file and output directory
+    python analysis/analysis/analyze_simple_mesh_metrics.py \
+        --quality-scores analysis/mesh_quality_batch/quality_scores.csv \
+        --output-dir analysis/simple_mesh_analysis_results
+
+    # Analyze geometric properties from different quality scores
+    python analysis/analysis/analyze_simple_mesh_metrics.py \
+        --quality-scores /data/experiment2/simple_mesh_metrics.csv \
+        --output-dir /results/experiment2/geometric_analysis/
 """
 
 import argparse

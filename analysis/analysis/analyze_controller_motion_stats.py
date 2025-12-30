@@ -1,13 +1,31 @@
 #!/usr/bin/env python3
 """
-Statistical analysis of controller motion data comparing Fog vs NoFog conditions.
+Statistical analysis of controller/hand motion data comparing Fog vs NoFog conditions.
 
-Generates publication-quality visualizations and a comprehensive statistical report.
+This script analyzes controller (hand tracking) motion data to compare user behavior
+between fog and no-fog experimental conditions. It examines both individual hand
+metrics and inter-hand coordination patterns.
 
-Usage:
-    python analysis/analyze_controller_motion_stats.py \
-        --input_csv analysis/controller_analysis.csv \
-        --output_dir analysis/controller_motion_analysis
+Key features:
+- Analysis of per-hand metrics: distance, speed, acceleration, workspace volume, jitter
+- Inter-hand coordination metrics: relative distance, movement correlation, synchronization
+- Paired statistical tests comparing fog vs no-fog conditions
+- Publication-quality visualizations (box plots, bar charts)
+- Separate analysis for left/right hand and inter-hand relationships
+
+Console Usage Examples:
+    # Basic controller motion analysis with default paths
+    python analysis/analysis/analyze_controller_motion_stats.py
+
+    # Specify custom input/output paths
+    python analysis/analysis/analyze_controller_motion_stats.py \
+        --input_csv analysis/data/controller_analysis.csv \
+        --output_dir analysis/controller_analysis_custom
+
+    # Analyze controller data from specific CSV file
+    python analysis/analysis/analyze_controller_motion_stats.py \
+        --input_csv /path/to/controller_data.csv \
+        --output_dir /path/to/results/
 """
 
 from __future__ import annotations

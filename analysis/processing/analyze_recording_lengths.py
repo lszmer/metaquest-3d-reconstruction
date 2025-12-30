@@ -1,11 +1,36 @@
 #!/usr/bin/env python3
 """
-Compute recording durations for every session listed in the master fog/no_fog
-report produced by `analyze_fog_no_fog_mapping.py`.
+Analyze recording durations for experiment sessions.
 
-For each `session_dir`, the script inspects YUV, RGB, depth descriptors, and
-HMD pose logs to estimate start/end timestamps and durations (seconds).
-Outputs a CSV summary.
+This script calculates accurate recording durations by examining multiple data sources
+within session directories. It can analyze either a single specified session or batch
+process all sessions listed in a master fog/no-fog report.
+
+Key features:
+- Examines multiple data sources: YUV frames, RGB frames, depth descriptors, HMD pose logs
+- Calculates start/end timestamps from filename patterns and metadata
+- Handles macOS sidecar files and timestamp parsing edge cases
+- Provides detailed console output for single session analysis
+- Generates comprehensive CSV reports for batch analysis
+- Validates data integrity by cross-checking multiple timestamp sources
+
+Console Usage Examples:
+    # Analyze a single session directory with detailed console output
+    python analysis/processing/analyze_recording_lengths.py \
+        --session-dir /Volumes/Intenso/Fog/20251209_144306
+
+    # Batch analyze recording lengths using default master report
+    python analysis/processing/analyze_recording_lengths.py
+
+    # Specify custom master report and output file for batch processing
+    python analysis/processing/analyze_recording_lengths.py \
+        --master-report analysis/data/master_fog_no_fog_report.csv \
+        --output analysis/data/recording_lengths.csv
+
+    # Process recordings from a different experiment
+    python analysis/processing/analyze_recording_lengths.py \
+        --master-report /data/experiment2/master_report.csv \
+        --output /results/experiment2/durations.csv
 """
 
 import argparse
@@ -161,6 +186,60 @@ def analyze_session(session_dir: Path) -> dict[str, str]:
     return row
 
 
+def print_session_analysis(session_dir: Path, row: dict[str, str]) -> None:
+    """Print detailed session analysis results to console in a legible format."""
+    print("=" * 80)
+    print(f"RECORDING LENGTH ANALYSIS: {session_dir.name}")
+    print("=" * 80)
+    print(f"Session Directory: {session_dir}")
+    print(f"Directory Exists: {row.get('session_dir_exists', 'Unknown')}")
+    print()
+
+    # Overall duration
+    overall_duration = row.get('overall_duration_s', '')
+    if overall_duration:
+        duration_sec = float(overall_duration)
+        print("OVERALL RECORDING DURATION:")
+        print(f"  Total Duration: {duration_sec:.3f} seconds ({duration_sec/60:.2f} minutes)")
+        print()
+
+    # Individual modalities
+    print("MODALITY BREAKDOWN:")
+    modalities = [
+        ("YUV Left Camera", "yuv_left"),
+        ("YUV Right Camera", "yuv_right"),
+        ("RGB Left Camera", "rgb_left"),
+        ("RGB Right Camera", "rgb_right"),
+        ("Depth Left Camera", "depth_left"),
+        ("Depth Right Camera", "depth_right"),
+        ("HMD Poses", "hmd"),
+    ]
+
+    for name, prefix in modalities:
+        duration = row.get(f'{prefix}_duration_s', '')
+        count = row.get(f'{prefix}_count', '0')
+        start = row.get(f'{prefix}_start_ms', '')
+        end = row.get(f'{prefix}_end_ms', '')
+
+        print(f"  {name}:")
+        if duration:
+            print(f"    Duration: {float(duration):.3f} seconds")
+        else:
+            print("    Duration: No data available")
+        print(f"    Sample Count: {count}")
+        if start and end:
+            print(f"    Time Range: {start}ms - {end}ms")
+        print()
+
+    # Summary
+    if overall_duration:
+        duration_sec = float(overall_duration)
+        status = "✓ Within expected range (≤20s)" if duration_sec <= 20.0 else f"⚠ Longer than expected ({duration_sec:.1f}s > 20s)"
+        print(f"STATUS: {status}")
+
+    print("=" * 80)
+
+
 def read_session_dirs(report_csv: Path) -> list[Path]:
     with report_csv.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -201,10 +280,20 @@ def write_report(rows: list[dict[str, str]], output_csv: Path) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Compute recording durations (seconds) for sessions listed in "
-            "master_fog_no_fog_report.csv."
+            "Analyze recording durations for experiment sessions. "
+            "Can process a single session directory or batch process from a master report."
         )
     )
+
+    # Single session mode
+    parser.add_argument(
+        "--session-dir",
+        type=Path,
+        default=None,
+        help="Single session directory to analyze (shows detailed console output)",
+    )
+
+    # Batch mode
     parser.add_argument(
         "--master-report",
         type=Path,
@@ -215,13 +304,26 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT,
-        help="Output CSV path for duration summary",
+        help="Output CSV path for duration summary (batch mode only)",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    # Single session mode
+    if args.session_dir:
+        if not args.session_dir.exists():
+            print(f"[Error] Session directory does not exist: {args.session_dir}")
+            return
+
+        print(f"[Info] Analyzing single session: {args.session_dir}")
+        row = analyze_session(args.session_dir)
+        print_session_analysis(args.session_dir, row)
+        return
+
+    # Batch mode (existing functionality)
     session_dirs = read_session_dirs(args.master_report)
     if not session_dirs:
         print(f"[Warning] No session_dir entries found in {args.master_report}")
@@ -239,4 +341,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

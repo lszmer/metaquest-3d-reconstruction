@@ -29,7 +29,7 @@ Three usage modes are supported:
    - Load pairs automatically from master_fog_no_fog_report.csv
    - Only pairs where both meshes exist (color_mesh_present=True) are included
    - Example:
-        python evaluate_fbx_quality.py --from-csv analysis/master_fog_no_fog_report.csv
+        python analysis/computation/evaluate_fbx_quality.py --from-csv analysis/data/master_fog_no_fog_report.csv
 """
 
 from __future__ import annotations

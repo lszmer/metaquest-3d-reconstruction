@@ -8,20 +8,34 @@ derived caches.
 
 Session directories are automatically loaded from recording_length_report.csv.
 
-Typical usage:
+Console Usage Examples:
+    # Trim by duration (default: 17 seconds) - safe mode
+    python analysis/processing/trim_recordings.py
 
-    # Trim by duration (default: 20 seconds)
-    python analysis/trim_recordings.py \\
-        --length-report analysis/recording_length_report.csv \\
+    # Trim to specific duration with custom report
+    python analysis/processing/trim_recordings.py \
+        --length-report analysis/data/recording_length_report.csv \
         --max-duration-s 20.0
 
-    # Trim by YUV frame count
-    python analysis/trim_recordings.py \\
-        --length-report analysis/recording_length_report.csv \\
-        --mode frames \\
+    # Trim by YUV frame count instead of duration
+    python analysis/processing/trim_recordings.py \
+        --mode frames \
         --yuv-frame-limit 923
 
-Use --dry-run to only print what would be deleted/modified.
+    # Preview what would be trimmed without making changes
+    python analysis/processing/trim_recordings.py \
+        --dry-run \
+        --max-duration-s 15.0
+
+    # Trim recordings from a different experiment
+    python analysis/processing/trim_recordings.py \
+        --length-report /data/experiment2/recording_lengths.csv \
+        --max-duration-s 25.0
+
+    # Trim to shorter duration for testing
+    python analysis/processing/trim_recordings.py \
+        --max-duration-s 10.0 \
+        --dry-run
 """
 
 import argparse

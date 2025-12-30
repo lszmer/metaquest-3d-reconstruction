@@ -1,15 +1,35 @@
 #!/usr/bin/env python3
 """
-Statistical analysis of HMD motion data comparing Fog vs NoFog conditions.
-Median-based version using non-parametric statistics.
+Median-based statistical analysis of HMD motion data comparing Fog vs NoFog conditions.
 
-Generates publication-quality visualizations and a comprehensive statistical report
-using median-based descriptive statistics and non-parametric tests.
+This script performs statistical analysis of head-mounted display (HMD) motion data using
+median-based descriptive statistics and non-parametric tests, which are more robust to
+outliers than mean-based approaches.
 
-Usage:
-    python analysis/analyze_hmd_motion_stats_median.py \
-        --input_csv analysis/hmd_analysis.csv \
-        --output_dir analysis/hmd_motion_analysis_median
+Key features:
+- Non-parametric statistical tests (Mann-Whitney U, Wilcoxon signed-rank)
+- Median-based descriptive statistics (median, IQR instead of mean, SD)
+- Same comprehensive visualizations and reporting as the parametric version
+- Particularly useful when data doesn't meet normality assumptions
+- Automatic detection of paired participants for within-subject analysis
+
+Console Usage Examples:
+    # Basic median-based analysis with default paths
+    python analysis/analysis/analyze_hmd_motion_stats_median.py
+
+    # Specify custom input/output paths
+    python analysis/analysis/analyze_hmd_motion_stats_median.py \
+        --input_csv analysis/data/hmd_analysis.csv \
+        --output_dir analysis/hmd_motion_analysis_median_custom
+
+    # Exclude specific participants from analysis
+    python analysis/analysis/analyze_hmd_motion_stats_median.py \
+        --exclude-participant "Maria"
+
+    # Merge results into master report
+    python analysis/analysis/analyze_hmd_motion_stats_median.py \
+        --merge-to-master \
+        --master-report analysis/data/master_fog_no_fog_report.csv
 """
 
 from __future__ import annotations

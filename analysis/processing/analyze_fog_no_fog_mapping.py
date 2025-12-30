@@ -1,12 +1,39 @@
 #!/usr/bin/env python3
 """
-Build a consolidated, symmetric fog/no_fog experiment report.
+Build consolidated fog/no-fog experiment report from session mappings.
 
-- Reads the mapping CSV (Name, NoFog, Fog).
-- Matches sessions to `/Volumes/Intenso/{NoFog,Fog}/<session>`.
-- Extracts reconstruction completion timestamps and pipeline runtimes (if present in pipeline_runtime.txt).
-- Adds mesh presence and evaluation placeholders.
-- Writes a *symmetric* per-participant CSV/XLSX with parallel NoFog/Fog columns.
+This script creates a comprehensive master report for fog vs no-fog 3D reconstruction
+experiments by mapping participant sessions, extracting metadata, and organizing
+data for downstream analysis. It produces a symmetric CSV/XLSX report with parallel
+columns for each experimental condition.
+
+Key features:
+- Reads participant-to-session mappings from CSV configuration
+- Validates session directory existence and structure
+- Extracts reconstruction completion timestamps and pipeline runtimes
+- Identifies available mesh outputs (FBX, PLY) for each session
+- Creates symmetric per-participant report with fog/no-fog paired columns
+- Generates evaluation placeholders for mesh quality analysis
+
+Console Usage Examples:
+    # Build master report using default paths
+    python analysis/processing/analyze_fog_no_fog_mapping.py
+
+    # Specify custom mapping file and root directory
+    python analysis/processing/analyze_fog_no_fog_mapping.py \
+        --mapping /data/experiment_config/mapping.csv \
+        --root /data/captures \
+        --output /results/master_report.csv
+
+    # Generate both CSV and Excel outputs
+    python analysis/processing/analyze_fog_no_fog_mapping.py \
+        --output analysis/data/master_report.csv \
+        --xlsx-output analysis/data/master_report.xlsx
+
+    # Use custom root directory for session data
+    python analysis/processing/analyze_fog_no_fog_mapping.py \
+        --root /Volumes/ExternalDrive/ExperimentData \
+        --output analysis/data/custom_master_report.csv
 """
 
 import argparse
