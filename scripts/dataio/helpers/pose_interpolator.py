@@ -24,20 +24,55 @@ class PoseInterpolator:
 
 
     def find_nearest_frames(self, timestamp: int, window_ms: int = 30) -> tuple[Optional[pd.Series], Optional[pd.Series]]:
+        """
+        Find nearest pose frames before and after the given timestamp.
+        
+        Args:
+            timestamp: Unix timestamp in microseconds
+            window_ms: Maximum time window in milliseconds to search for nearby poses
+        
+        Returns:
+            Tuple of (previous_pose, next_pose) Series, or (None, None) if no poses found within window
+        """
+        # Convert window from milliseconds to microseconds
+        # Timestamps in hmd_poses.csv are in microseconds (13 digits)
+        window_us = window_ms * 1000
+        
         before = self.hmd_pose_df[self.hmd_pose_df['unix_time'] <= timestamp]
         after = self.hmd_pose_df[self.hmd_pose_df['unix_time'] >= timestamp]
 
-        prev = before.iloc[-1] if not before.empty and timestamp - before.iloc[-1]['unix_time'] <= window_ms else None
-        next = after.iloc[0] if not after.empty and after.iloc[0]['unix_time'] - timestamp <= window_ms else None
+        prev = before.iloc[-1] if not before.empty and abs(timestamp - before.iloc[-1]['unix_time']) <= window_us else None
+        next = after.iloc[0] if not after.empty and abs(after.iloc[0]['unix_time'] - timestamp) <= window_us else None
 
         return prev, next
 
 
     def interpolate_pose(self, timestamp: int) -> Optional[tuple[np.ndarray, np.ndarray]]:
+        """
+        Interpolate pose at the given timestamp.
+        
+        If timestamp is before first pose or after last pose, uses the nearest pose
+        (extrapolation). Otherwise, interpolates between nearest poses.
+        """
         prev, next = self.find_nearest_frames(timestamp)
-        if prev is None or next is None:
+        
+        # If no poses found at all, return None
+        if prev is None and next is None:
             return None
-
+        
+        # If only one pose found (extrapolation case)
+        if prev is None:
+            # Use the next pose (timestamp is before first pose)
+            pos = np.array([next['pos_x'], next['pos_y'], next['pos_z']])
+            rot = np.array([next['rot_x'], next['rot_y'], next['rot_z'], next['rot_w']])
+            return pos, rot
+        elif next is None:
+            # Use the previous pose (timestamp is after last pose)
+            pos = np.array([prev['pos_x'], prev['pos_y'], prev['pos_z']])
+            rot = np.array([prev['rot_x'], prev['rot_y'], prev['rot_z'], prev['rot_w']])
+            return pos, rot
+        
+        # Both poses found - interpolate
         t0 = prev['unix_time']
         t1 = next['unix_time']
         alpha = (timestamp - t0) / (t1 - t0) if t1 != t0 else 0.0

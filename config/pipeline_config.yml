@@ -87,7 +87,7 @@ reconstruction:
     estimated_vertex_number: -1  # Optional: estimate number of vertices (-1 to auto-compute)
     interval: 100  # Keyframe interval for color pose optimization
     max_iteration: 100  # Max number of iterations for pose refinement
-    use_dataset_cache: true
+    use_dataset_cache: false
     min_triangle_count: 5000  # Keep smaller components; less aggressive filtering of partial surfaces
 
   color_aligned_depth_rendering:

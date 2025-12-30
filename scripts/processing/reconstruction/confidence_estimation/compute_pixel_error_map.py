@@ -3,24 +3,70 @@ import numpy as np
 
 def bilinear_interpolate_depth(depth_map: np.ndarray, u: np.ndarray, v: np.ndarray, depth_max: float) -> np.ndarray:
     h, w = depth_map.shape
-    u0 = np.floor(u).astype(np.int32)
-    v0 = np.floor(v).astype(np.int32)
+    
+    # Filter out NaN and Inf values before casting to int
+    # Also filter out values that are way out of bounds (to prevent int32 overflow)
+    # Use very conservative bounds: pixel coordinates should never exceed image dimensions by much
+    # Add generous margin (10x image size) to account for projection errors, but prevent overflow
+    max_coord = max(w, h) * 10
+    valid_coords = (
+        np.isfinite(u) & np.isfinite(v) &
+        (u >= -max_coord) & (u < max_coord) &
+        (v >= -max_coord) & (v < max_coord)
+    )
+    if not valid_coords.any():
+        return np.zeros_like(u, dtype=np.float32)
+    
+    # Only process valid coordinates
+    u_valid = u[valid_coords]
+    v_valid = v[valid_coords]
+    
+    # Clip values to reasonable bounds before floor to prevent int32 overflow
+    # Use a safe range that's well within int32 limits but covers all valid pixel coordinates
+    max_safe_int32 = 2**30  # 1 billion, well below int32 max
+    u_valid = np.clip(u_valid, -max_safe_int32, max_safe_int32)
+    v_valid = np.clip(v_valid, -max_safe_int32, max_safe_int32)
+    
+    # Suppress warnings during floor and cast since we've already validated bounds
+    with np.errstate(invalid='ignore', over='ignore'):
+        u_floor = np.floor(u_valid)
+        v_floor = np.floor(v_valid)
+        
+        # Clip again after floor to ensure safe casting
+        u_floor = np.clip(u_floor, -max_safe_int32, max_safe_int32)
+        v_floor = np.clip(v_floor, -max_safe_int32, max_safe_int32)
+        
+        u0 = u_floor.astype(np.int32)
+        v0 = v_floor.astype(np.int32)
     u1 = u0 + 1
     v1 = v0 + 1
 
+    # Bounds check: ensure indices are within valid array range
+    # We need u0 >= 0, u1 < w, v0 >= 0, v1 < h for valid bilinear interpolation
     valid = (
         (u0 >= 0) & (u1 < w) &
-        (v0 >= 0) & (v1 < h)
+        (v0 >= 0) & (v1 < h) &
+        (u0 < w) & (v0 < h)  # Additional safety check
     )
 
     z = np.zeros_like(u, dtype=np.float32)
+    
+    if not valid.any():
+        return z
 
     u0v = u0[valid]
     u1v = u1[valid]
     v0v = v0[valid]
     v1v = v1[valid]
-    uv = u[valid]
-    vv = v[valid]
+    uv = u_valid[valid]
+    vv = v_valid[valid]
+
+    # Final safety check: ensure indices are within bounds (defensive programming)
+    # This should not be necessary given the valid check above, but prevents crashes
+    u0v = np.clip(u0v, 0, w - 1).astype(np.int32)
+    u1v = np.clip(u1v, 0, w - 1).astype(np.int32)
+    v0v = np.clip(v0v, 0, h - 1).astype(np.int32)
+    v1v = np.clip(v1v, 0, h - 1).astype(np.int32)
 
     Ia = depth_map[v0v, u0v]
     Ib = depth_map[v0v, u1v]
@@ -40,7 +86,8 @@ def bilinear_interpolate_depth(depth_map: np.ndarray, u: np.ndarray, v: np.ndarr
     wd = (uv - u0v) * (vv - v0v)
 
     z_interp = wa * Ia + wb * Ib + wc * Ic + wd * Id
-    z[valid] = np.where(is_valid_interp, z_interp, 0.0)
+    z_valid_indices = np.where(valid_coords)[0][valid]
+    z[z_valid_indices] = np.where(is_valid_interp, z_interp, 0.0)
 
     return z
 
@@ -100,44 +147,74 @@ def compute_pixel_error_map(
     cx, cy = intrinsic_matrices[target_frame_idx][0, 2], intrinsic_matrices[target_frame_idx][1, 2]
 
     # Step 3: Project points to target depth map pixel coordinates
-    valid_project_mask = (z > 0) & np.isfinite(z) & (z <= depth_max)
-    x, y, z = x[valid_project_mask], y[valid_project_mask], z[valid_project_mask]
+    valid_project_mask = (z > 0) & np.isfinite(z) & (z <= depth_max) & np.isfinite(x) & np.isfinite(y)
+    if not valid_project_mask.any():
+        # No valid points to project, return empty confidence map
+        return np.full_like(ref_depth_map, fill_value=np.nan, dtype=np.float32)
+    
+    # Filter to valid points
+    x_valid = x[valid_project_mask]
+    y_valid = y[valid_project_mask]
+    z_valid = z[valid_project_mask]
+    
+    # Get original indices for tracking
+    original_indices = np.where(valid_project_mask)[0]
 
-    u = (x * fx / z) + cx
-    v = (y * fy / z) + cy
+    u = (x_valid * fx / z_valid) + cx
+    v = (y_valid * fy / z_valid) + cy
+    
+    # Additional validation: ensure u and v are finite
+    valid_uv = np.isfinite(u) & np.isfinite(v)
+    if not valid_uv.any():
+        return np.full_like(ref_depth_map, fill_value=np.nan, dtype=np.float32)
+    
+    # Further filter to valid UV coordinates
+    u_valid = u[valid_uv]
+    v_valid = v[valid_uv]
+    z_valid_uv = z_valid[valid_uv]
+    original_indices_uv = original_indices[valid_uv]
 
     # Step 4: Bilinear interpolation to get target depth values
     z_target = bilinear_interpolate_depth(
         depth_map=target_depth_map,
-        u=u,
-        v=v,
+        u=u_valid,
+        v=v_valid,
         depth_max=depth_max
     )
-    valid_target_mask = z_target > 0
+    valid_target_mask = (z_target > 0) & np.isfinite(z_target)
+    if not valid_target_mask.any():
+        return np.full_like(ref_depth_map, fill_value=np.nan, dtype=np.float32)
 
     # Step 5: Compute pixel errors
-    x_valid_target  = (u[valid_target_mask] - cx) * z_target[valid_target_mask] / fx
-    y_valid_target  = (v[valid_target_mask] - cy) * z_target[valid_target_mask] / fy
-    z_valid_target  = z_target[valid_target_mask]
+    u_final = u_valid[valid_target_mask]
+    v_final = v_valid[valid_target_mask]
+    z_target_final = z_target[valid_target_mask]
+    
+    x_valid_target = (u_final - cx) * z_target_final / fx
+    y_valid_target = (v_final - cy) * z_target_final / fy
+    z_valid_target = z_target_final
     target_points = np.stack([x_valid_target, y_valid_target, z_valid_target], axis=1)
 
     ones = np.ones((target_points.shape[0], 1))
     target_points_h = np.concatenate([target_points, ones], axis=1)
     target_points_world = (extrinsic_matrices[target_frame_idx] @ target_points_h.T).T[:, :3]
 
-    ref_points_valid_world = ref_points_world[valid_project_mask][valid_target_mask]
+    # Get corresponding reference points
+    final_original_indices = original_indices_uv[valid_target_mask]
+    ref_points_valid_world = ref_points_world[final_original_indices]
     dist = np.linalg.norm(ref_points_valid_world - target_points_world, axis=1)
 
     # Step 6: Create confidence map
     confidence_map = np.full_like(ref_depth_map, fill_value=np.nan, dtype=np.float32)
 
-    u_valid = ref_u[valid_project_mask][valid_target_mask]
-    v_valid = ref_v[valid_project_mask][valid_target_mask]
-    inside_mask = (u_valid >= 0) & (u_valid < w) & (v_valid >= 0) & (v_valid < h)
+    u_ref = ref_u[final_original_indices]
+    v_ref = ref_v[final_original_indices]
+    inside_mask = (u_ref >= 0) & (u_ref < w) & (v_ref >= 0) & (v_ref < h)
 
-    u_valid = u_valid[inside_mask]
-    v_valid = v_valid[inside_mask]
+    u_ref_inside = u_ref[inside_mask]
+    v_ref_inside = v_ref[inside_mask]
+    dist_inside = dist[inside_mask]
 
-    confidence_map[v_valid, u_valid] = dist[inside_mask]
+    confidence_map[v_ref_inside, u_ref_inside] = dist_inside
 
     return confidence_map

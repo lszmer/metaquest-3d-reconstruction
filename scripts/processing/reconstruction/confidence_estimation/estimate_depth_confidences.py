@@ -95,21 +95,26 @@ def build_and_save_confidence_map(
     if confidence_map is not None:
         return
 
-    confidence_map = build_confidence_map(
-        depth_data_io=depth_data_io,
-        dataset=dataset,
-        intrinsic_matrices=intrinsic_matrices,
-        extrinsic_matrices=extrinsic_matrices,
-        extrinsic_matrices_inv=extrinsic_matrices_inv,
-        side=side,
-        ref_frame_idx=ref_frame_idx,
-        target_frame_range=config.target_frame_range,
-        depth_max=config.depth_max,
-        error_threshold=config.error_threshold
-    )
+    try:
+        confidence_map = build_confidence_map(
+            depth_data_io=depth_data_io,
+            dataset=dataset,
+            intrinsic_matrices=intrinsic_matrices,
+            extrinsic_matrices=extrinsic_matrices,
+            extrinsic_matrices_inv=extrinsic_matrices_inv,
+            side=side,
+            ref_frame_idx=ref_frame_idx,
+            target_frame_range=config.target_frame_range,
+            depth_max=config.depth_max,
+            error_threshold=config.error_threshold
+        )
 
-    if confidence_map is not None:
-        depth_data_io.save_confidence_map(side=side, timestamp=timestamp, confidence_map=confidence_map)
+        if confidence_map is not None:
+            depth_data_io.save_confidence_map(side=side, timestamp=timestamp, confidence_map=confidence_map)
+    except Exception as e:
+        print(f"[Error] build_and_save_confidence_map failed for {side.name} frame {ref_frame_idx} (timestamp {timestamp}): {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def estimate_depth_confidences(

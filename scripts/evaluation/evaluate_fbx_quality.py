@@ -750,6 +750,9 @@ def write_pairwise_reports(
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Create name-to-score mapping for reliable lookup
+    scores_by_name: Dict[str, QualityScores] = {s.name: s for s in scores}
+
     summary_csv = out_dir / "pairwise_summary.csv"
     rows = []
     labels = []
@@ -758,24 +761,72 @@ def write_pairwise_reports(
     deltas = []
 
     for i, (fog_idx, nofog_idx) in enumerate(pair_indices):
-        fog_s = scores[fog_idx]
-        nofog_s = scores[nofog_idx]
         meta = pair_meta[i] if i < len(pair_meta) else {
             "participant": f"pair{i+1}",
             "pair_id": f"pair{i+1}",
-            "fog_name": fog_s.name,
-            "nofog_name": nofog_s.name,
+            "fog_name": "",
+            "nofog_name": "",
         }
-        delta = nofog_s.Q_norm - fog_s.Q_norm
+        
+        # Use names from metadata for reliable matching (more robust than indices)
+        fog_name = meta.get("fog_name", "")
+        nofog_name = meta.get("nofog_name", "")
+        
+        # Try to find scores by name first (most reliable)
+        if fog_name and nofog_name:
+            fog_s = scores_by_name.get(fog_name)
+            nofog_s = scores_by_name.get(nofog_name)
+            
+            if fog_s is None or nofog_s is None:
+                # Fallback to indices if names don't match (shouldn't happen, but defensive)
+                print(f"[Warning] Could not find scores by name for pair {i+1}, using indices")
+                if fog_idx < len(scores) and nofog_idx < len(scores):
+                    fog_s = scores[fog_idx]
+                    nofog_s = scores[nofog_idx]
+                else:
+                    print(f"[Error] Invalid indices for pair {i+1}: fog_idx={fog_idx}, nofog_idx={nofog_idx}")
+                    continue
+        else:
+            # Fallback to indices if metadata doesn't have names
+            if fog_idx < len(scores) and nofog_idx < len(scores):
+                fog_s = scores[fog_idx]
+                nofog_s = scores[nofog_idx]
+                # Update metadata with actual names
+                meta["fog_name"] = fog_s.name
+                meta["nofog_name"] = nofog_s.name
+            else:
+                print(f"[Error] Invalid indices for pair {i+1}: fog_idx={fog_idx}, nofog_idx={nofog_idx}")
+                continue
+        
+        delta_nofog_minus_fog = nofog_s.Q_norm - fog_s.Q_norm
+        delta_fog_minus_nofog = fog_s.Q_norm - nofog_s.Q_norm
+
+        # Extract just the date ID from mesh names for cleaner output
+        # Pattern: {participant}_{nofog_session}__{fog_session}_{condition}
+        # For fog: extract fog_session (second part after "__")
+        fog_base = fog_s.name[:-4] if fog_s.name.endswith("_fog") else fog_s.name
+        fog_parts = fog_base.split("__")
+        fog_session = fog_parts[1] if len(fog_parts) == 2 else fog_s.name
+
+        # For nofog: extract nofog_session (last 15 chars of first part before "__")
+        nofog_base = nofog_s.name[:-6] if nofog_s.name.endswith("_nofog") else nofog_s.name
+        nofog_parts = nofog_base.split("__")
+        if len(nofog_parts) == 2:
+            nofog_part = nofog_parts[0]  # e.g., "Kilian Kozerke_20251212_191346"
+            # Extract just the date ID (last 15 characters: YYYYMMDD_HHMMSS)
+            nofog_session = nofog_part[-15:] if len(nofog_part) >= 15 and "_" in nofog_part[-15:] else nofog_s.name
+        else:
+            nofog_session = nofog_s.name
 
         rows.append([
             meta.get("participant", ""),
             meta.get("pair_id", ""),
-            fog_s.name,
+            fog_session,
             f"{fog_s.Q_norm:.6f}",
-            nofog_s.name,
+            nofog_session,
             f"{nofog_s.Q_norm:.6f}",
-            f"{delta:.6f}",
+            f"{delta_nofog_minus_fog:.6f}",
+            f"{delta_fog_minus_nofog:.6f}",
         ])
         labels.append(meta.get("participant") or meta.get("pair_id") or f"pair{i+1}")
         fog_vals.append(fog_s.Q_norm)
@@ -784,7 +835,7 @@ def write_pairwise_reports(
 
     with summary_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["participant", "pair_id", "fog_name", "fog_Q_norm", "nofog_name", "nofog_Q_norm", "delta_nofog_minus_fog"])
+        writer.writerow(["participant", "pair_id", "fog_name", "fog_Q_norm", "nofog_name", "nofog_Q_norm", "delta_nofog_minus_fog", "delta_fog_minus_nofog"])
         writer.writerows(rows)
     print(f"[Info] Wrote pairwise summary CSV: {summary_csv}")
 
@@ -828,11 +879,11 @@ def write_pairwise_reports(
         "</head><body>",
         "<h2>Fog vs NoFog Mesh Quality (normalized scores)</h2>",
         "<table>",
-        "<tr><th>Participant</th><th>Pair ID</th><th>Fog</th><th>Fog Q_norm</th><th>NoFog</th><th>NoFog Q_norm</th><th>Delta (NoFog-Fog)</th></tr>",
+        "<tr><th>Participant</th><th>Pair ID</th><th>Fog</th><th>Fog Q_norm</th><th>NoFog</th><th>NoFog Q_norm</th><th>Delta (NoFog-Fog)</th><th>Delta (Fog-NoFog)</th></tr>",
     ]
     for r in rows:
         html_parts.append(
-            f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td><td>{r[4]}</td><td>{r[5]}</td><td>{r[6]}</td></tr>"
+            f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td><td>{r[4]}</td><td>{r[5]}</td><td>{r[6]}</td><td>{r[7]}</td></tr>"
         )
     html_parts.append("</table><br/>")
     for title, b64 in pngs.items():
@@ -1300,6 +1351,11 @@ def main() -> None:
     else:
         # Parallel processing
         print(f"[Info] Processing {len(mesh_paths)} meshes in parallel using {num_workers} workers")
+        # Create name-to-index mapping for maintaining order
+        name_to_index: Dict[str, int] = {name: idx for idx, (_, name) in enumerate(mesh_paths)}
+        # Store results by name to maintain correct pairing
+        raw_by_name: Dict[str, RawMeshMetrics] = {}
+        
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             # Submit all tasks
             future_to_mesh = {
@@ -1312,11 +1368,14 @@ def main() -> None:
                 mesh_data = future_to_mesh[future]
                 try:
                     raw = future.result()
-                    raw_list.append(raw)
+                    raw_by_name[raw.name] = raw
                     print(f"[Info] Completed processing: {raw.name}")
 
+                    # Reconstruct raw_list in correct order for progressive scoring
+                    raw_list_ordered = [raw_by_name[name] for _, name in mesh_paths if name in raw_by_name]
+                    
                     # Progressive batch scoring and CSV updates
-                    scores_so_far = compute_quality_scores(raw_list)
+                    scores_so_far = compute_quality_scores(raw_list_ordered)
                     # Only meaningful when we are in pair / from-csv modes
                     if args.from_csv is not None and pair_meta:
                         try:
@@ -1332,6 +1391,8 @@ def main() -> None:
                     print(f"[Error] Mesh {name} generated an exception: {exc}")
                     raise
 
+        # Reconstruct raw_list in the correct order matching mesh_paths
+        raw_list = [raw_by_name[name] for _, name in mesh_paths]
         print(f"[Info] All {len(mesh_paths)} meshes processed in parallel")
 
         # Encourage Python to release memory between large meshes
@@ -1357,10 +1418,37 @@ def main() -> None:
 
     # Print pair-wise summaries when in pair mode
     if pair_indices:
+        # Create name-to-score mapping for reliable lookup
+        scores_by_name: Dict[str, QualityScores] = {s.name: s for s in scores}
+        
         pairs: List[Tuple[QualityScores, QualityScores]] = []
-        for fog_idx, nofog_idx in pair_indices:
-            fog_s = scores[fog_idx]
-            nofog_s = scores[nofog_idx]
+        for i, (fog_idx, nofog_idx) in enumerate(pair_indices):
+            meta = pair_meta[i] if i < len(pair_meta) else None
+            
+            # Use names from metadata for reliable matching
+            if meta:
+                fog_name = meta.get("fog_name", "")
+                nofog_name = meta.get("nofog_name", "")
+                fog_s = scores_by_name.get(fog_name) if fog_name else None
+                nofog_s = scores_by_name.get(nofog_name) if nofog_name else None
+                
+                if fog_s is None or nofog_s is None:
+                    # Fallback to indices
+                    if fog_idx < len(scores) and nofog_idx < len(scores):
+                        fog_s = scores[fog_idx]
+                        nofog_s = scores[nofog_idx]
+                    else:
+                        print(f"[Error] Could not find scores for pair {i+1}")
+                        continue
+            else:
+                # Fallback to indices if no metadata
+                if fog_idx < len(scores) and nofog_idx < len(scores):
+                    fog_s = scores[fog_idx]
+                    nofog_s = scores[nofog_idx]
+                else:
+                    print(f"[Error] Invalid indices for pair {i+1}")
+                    continue
+            
             pairs.append((fog_s, nofog_s))
         print_pair_summaries(pairs)
         write_pairwise_reports(scores, pair_indices, pair_meta, out_dir)
