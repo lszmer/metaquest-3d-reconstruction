@@ -34,7 +34,7 @@ except ImportError:
     # If running as a script, add parent directory to path
     script_dir = Path(__file__).resolve().parent
     sys.path.insert(0, str(script_dir.parent))
-    from evaluation.mesh_loader import load_mesh, mesh_to_point_cloud
+    from .mesh_loader import load_mesh, mesh_to_point_cloud
 
 
 @dataclass

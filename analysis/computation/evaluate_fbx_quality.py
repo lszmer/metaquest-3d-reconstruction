@@ -59,7 +59,7 @@ except ImportError:
 
     script_dir = Path(__file__).resolve().parent
     sys.path.insert(0, str(script_dir.parent))
-    from evaluation.mesh_loader import load_mesh  # type: ignore
+    from .mesh_loader import load_mesh  # type: ignore
 
 
 # -----------------------------------------------------------------------------

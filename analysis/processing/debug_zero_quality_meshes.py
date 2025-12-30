@@ -11,7 +11,7 @@ from pathlib import Path
 script_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(script_dir))
 
-from scripts.evaluation.evaluate_fbx_quality import (
+from analysis.computation.evaluate_fbx_quality import (
     compute_raw_metrics_for_mesh,
     compute_quality_scores,
     QualityScores,
