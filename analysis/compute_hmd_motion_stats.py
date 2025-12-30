@@ -124,13 +124,23 @@ def compute_body_distance(positions: np.ndarray, dt_seconds: np.ndarray) -> tupl
 
 
 def compute_euler_ranges(quaternions: np.ndarray) -> tuple[float, float, float]:
-    """Return yaw/pitch/roll ranges in radians."""
+    """
+    Return yaw/pitch/roll ranges in radians.
+    
+    In Quest coordinate system (X-right, Y-up, Z-backward, right-handed):
+    - Pitch (vertical/up-down): rotation around X-axis → eulers[:, 0]
+    - Yaw (horizontal/left-right): rotation around Y-axis → eulers[:, 1]
+    - Roll (head tilting): rotation around Z-axis → eulers[:, 2]
+    """
     if len(quaternions) == 0:
         return 0.0, 0.0, 0.0
 
     eulers = R.from_quat(quaternions).as_euler("xyz", degrees=False)
     ranges = eulers.max(axis=0) - eulers.min(axis=0)
-    yaw_range, pitch_range, roll_range = (float(r) for r in ranges)
+    # Correct mapping: pitch = X-axis, yaw = Y-axis, roll = Z-axis
+    pitch_range = float(ranges[0])  # X-axis rotations (vertical scanning)
+    yaw_range = float(ranges[1])    # Y-axis rotations (horizontal scanning)
+    roll_range = float(ranges[2])    # Z-axis rotations (head tilting)
     return yaw_range, pitch_range, roll_range
 
 
@@ -258,6 +268,10 @@ def compute_cumulative_directional_movements(quaternions: np.ndarray) -> tuple[f
     These represent how much the user has turned their head up/down and left/right,
     respectively, regardless of body position.
     
+    In Quest coordinate system (X-right, Y-up, Z-backward, right-handed):
+    - Pitch (vertical): rotation around X-axis → eulers[:, 0]
+    - Yaw (horizontal): rotation around Y-axis → eulers[:, 1]
+    
     Returns:
         cumulative_vertical_rad: cumulative vertical rotation in radians (pitch)
         cumulative_horizontal_rad: cumulative horizontal rotation in radians (yaw)
@@ -265,14 +279,13 @@ def compute_cumulative_directional_movements(quaternions: np.ndarray) -> tuple[f
     if len(quaternions) < 2:
         return 0.0, 0.0
     
-    # Convert quaternions to Euler angles (xyz convention: roll, pitch, yaw)
+    # Convert quaternions to Euler angles (xyz convention)
     eulers = R.from_quat(quaternions).as_euler("xyz", degrees=False)
     
     # Extract pitch (vertical/up-down) and yaw (horizontal/left-right)
-    # eulers[:, 1] is pitch (rotation around Y axis - up/down)
-    # eulers[:, 2] is yaw (rotation around Z axis - left/right)
-    pitch_angles = eulers[:, 1]
-    yaw_angles = eulers[:, 2]
+    # Correct mapping: pitch = X-axis, yaw = Y-axis
+    pitch_angles = eulers[:, 0]  # X-axis rotations (vertical scanning)
+    yaw_angles = eulers[:, 1]     # Y-axis rotations (horizontal scanning)
     
     # Compute cumulative absolute changes (how much the head has rotated)
     pitch_deltas = np.diff(pitch_angles)
