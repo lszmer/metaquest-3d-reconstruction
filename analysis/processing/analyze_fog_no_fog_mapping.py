@@ -91,14 +91,14 @@ def read_mapping(csv_path: Path) -> List[Dict[str, str]]:
         if ";" in sample and "," not in sample.splitlines()[0]:
             reader = csv.DictReader(f, delimiter=";")
         else:
-        reader = csv.DictReader(f)
+            reader = csv.DictReader(f)
         fieldnames = set(reader.fieldnames or [])
 
         # Case 1: Expected mapping format
         required = {"Name", "NoFog", "Fog"}
         missing = required - fieldnames
         if not missing:
-        return [row for row in reader]
+            return [row for row in reader]
 
         # Case 2: Fallback to master_fog_no_fog_report-style format
         # Columns: participant, condition, session_id, paired_session_id

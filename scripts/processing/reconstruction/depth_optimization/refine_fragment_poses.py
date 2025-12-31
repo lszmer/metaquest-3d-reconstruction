@@ -16,26 +16,46 @@ def integrate_fragment_point_cloud(
     frag_dataset: DepthDataset,
     side: Side,
     config: FragmentPoseRefinementConfig
-) -> tuple[Side, o3d.t.geometry.PointCloud]:
-    vbg = integrate(
-        dataset=frag_dataset,
-        depth_data_io=depth_data_io,
-        side=side,
-        use_confidence_filtered_depth=config.use_confidence_filtered_depth,
-        confidence_threshold=config.confidence_threshold,
-        valid_count_threshold=config.valid_count_threshold,
-        voxel_size=config.voxel_size,
-        block_resolution=config.block_resolution,
-        block_count=config.block_count,
-        depth_max=config.depth_max,
-        trunc_voxel_multiplier=config.trunc_voxel_multiplier,
-        device=config.device,
-        show_progress=False,
-        desc=None,
-        vbg_opt=None,
-    )
+) -> Optional[tuple[Side, o3d.t.geometry.PointCloud]]:
+    try:
+        vbg = integrate(
+            dataset=frag_dataset,
+            depth_data_io=depth_data_io,
+            side=side,
+            use_confidence_filtered_depth=config.use_confidence_filtered_depth,
+            confidence_threshold=config.confidence_threshold,
+            valid_count_threshold=config.valid_count_threshold,
+            voxel_size=config.voxel_size,
+            block_resolution=config.block_resolution,
+            block_count=config.block_count,
+            depth_max=config.depth_max,
+            trunc_voxel_multiplier=config.trunc_voxel_multiplier,
+            device=config.device,
+            show_progress=False,
+            desc=None,
+            vbg_opt=None,
+        )
 
-    return side, vbg.extract_point_cloud()
+        pcd = vbg.extract_point_cloud()
+        
+        # Check if point cloud is empty
+        if pcd.point.positions.shape[0] == 0:
+            print(f"[Warning] Fragment point cloud for {side.name} is empty (no valid points). "
+                  f"Dataset has {len(frag_dataset.timestamps)} frames. "
+                  f"This may indicate insufficient depth data or overly strict filtering.")
+            return None
+        
+        # Ensure point cloud has valid structure (no color tensor issues)
+        # The VBG only has tsdf/weight, so colors should not be set
+        # If Open3D tries to set colors, we need to handle it gracefully
+        return side, pcd
+        
+    except Exception as e:
+        print(f"[Error] integrate_fragment_point_cloud failed for {side.name}: {e}")
+        print(f"[Error] Fragment dataset info: {len(frag_dataset.timestamps)} frames, "
+              f"timestamps range: {frag_dataset.timestamps.min() if len(frag_dataset.timestamps) > 0 else 'N/A'} - "
+              f"{frag_dataset.timestamps.max() if len(frag_dataset.timestamps) > 0 else 'N/A'}")
+        return None
 
 
 def integrate_and_save_fragment_point_clouds(
@@ -43,7 +63,13 @@ def integrate_and_save_fragment_point_clouds(
     recon_data_io: ReconstructionDataIO,
     fragment_dataset_map: dict[Side, list[DepthDataset]],
     config: FragmentPoseRefinementConfig
-):
+) -> dict[Side, int]:
+    """
+    Integrate and save fragment point clouds.
+    
+    Returns:
+        Dictionary mapping each side to the number of successfully saved fragment point clouds.
+    """
     arg_list = []
 
     for side, frag_datasets in fragment_dataset_map.items():
@@ -52,7 +78,7 @@ def integrate_and_save_fragment_point_clouds(
             for frag_dataset in frag_datasets
         ])
 
-    results: list[Optional[tuple[Side, o3d.t.geometry.VoxelBlockGrid]]] = parallel_map(
+    results: list[Optional[tuple[Side, o3d.t.geometry.PointCloud]]] = parallel_map(
         func=integrate_fragment_point_cloud,
         args_list=arg_list,
         max_workers=None,
@@ -63,10 +89,17 @@ def integrate_and_save_fragment_point_clouds(
         desc="[Info] Integrating Fragments..."
     )
 
-    if any(result is None for result in results):
-        raise Exception("Failed to integrate fragment point clouds.")
+    # Filter out None results (failed or empty point clouds)
+    valid_results = [r for r in results if r is not None]
+    failed_count = len(results) - len(valid_results)
     
-    frag_vbg_list = cast(list[tuple[Side, o3d.t.geometry.PointCloud]], results)
+    if failed_count > 0:
+        print(f"[Warning] {failed_count} out of {len(results)} fragment point clouds failed to integrate or were empty.")
+    
+    if len(valid_results) == 0:
+        raise Exception("Failed to integrate fragment point clouds: all fragments produced empty or invalid point clouds.")
+    
+    frag_vbg_list = cast(list[tuple[Side, o3d.t.geometry.PointCloud]], valid_results)
 
     indices_map: dict[Side, int] = {}
     for side, pcd in frag_vbg_list:
@@ -78,6 +111,12 @@ def integrate_and_save_fragment_point_clouds(
         indices_map[side] = index
 
         recon_data_io.save_fragment_pcd(pcd=pcd, side=side, index=index)
+    
+    print(f"[Info] Successfully integrated and saved {len(frag_vbg_list)} fragment point clouds.")
+    
+    # Return the actual fragment counts (indices are 0-based, so add 1)
+    fragment_counts = {side: index + 1 for side, index in indices_map.items()}
+    return fragment_counts
 
 
 def compute_pcd_pair_edge(
@@ -238,7 +277,8 @@ def refine_fragment_poses(
     fragment_dataset_map: dict[Side, list[DepthDataset]],
     config: FragmentPoseRefinementConfig
 ):
-    integrate_and_save_fragment_point_clouds(
+    # Integrate and save fragment point clouds, getting actual counts of saved fragments
+    fragment_counts = integrate_and_save_fragment_point_clouds(
         depth_data_io=depth_data_io,
         recon_data_io=recon_data_io,
         fragment_dataset_map=fragment_dataset_map,
@@ -246,9 +286,7 @@ def refine_fragment_poses(
     )
 
     # Register fragments using pairwise ICP
-    fragment_counts = {}
-    for side, fragment_datasets in fragment_dataset_map.items():
-        fragment_counts[side] = len(fragment_datasets)
+    # Note: fragment_counts now reflects only successfully saved fragments
     
     pose_graph, node_side_index_list = build_pose_graph_for_scene(
         recon_data_io=recon_data_io,

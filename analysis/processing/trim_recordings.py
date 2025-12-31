@@ -29,8 +29,8 @@ Console Usage Examples:
 
     # Trim recordings from a different experiment
     python analysis/processing/trim_recordings.py \
-        --length-report /data/experiment2/recording_lengths.csv \
-        --max-duration-s 25.0
+        --length-report analysis/data/recording_lengths.csv \
+        --max-duration-s 17.1
 
     # Trim to shorter duration for testing
     python analysis/processing/trim_recordings.py \
@@ -152,22 +152,37 @@ def _combine_modalities(modalities: Iterable[TimeStats]) -> TimeStats:
 
 def _trim_timestamped_dir(
     dir_path: Path, suffix: str, cutoff_ms: int, dry_run: bool
-) -> None:
+) -> bool:
+    """
+    Trim timestamped files in a directory.
+    Returns True if any files would be deleted, False otherwise.
+    """
     if not dir_path.exists():
-        return
+        return False
+    
+    files_to_delete = []
     for file_path in dir_path.glob(f"*{suffix}"):
         ts = _parse_timestamp_stem(file_path.stem)
         if ts is None:
             continue
         if ts > cutoff_ms:
-            if dry_run:
-                print(f"[DRY] Would delete {file_path}")
-            else:
-                try:
-                    file_path.unlink()
-                    print(f"[Trim] Deleted {file_path}")
-                except OSError as e:
-                    print(f"[Error] Failed to delete {file_path}: {e}")
+            files_to_delete.append(file_path)
+    
+    if not files_to_delete:
+        return False
+    
+    if dry_run:
+        # In dry-run, only print the directory once
+        print(f"[DRY] Would delete {len(files_to_delete)} file(s) from {dir_path}")
+    else:
+        for file_path in files_to_delete:
+            try:
+                file_path.unlink()
+                print(f"[Trim] Deleted {file_path}")
+            except OSError as e:
+                print(f"[Error] Failed to delete {file_path}: {e}")
+    
+    return True
 
 
 def _trim_depth_modalities(session_dir: Path, side_prefix: str, cutoff_ms: int, dry_run: bool) -> None:
@@ -192,7 +207,8 @@ def _trim_depth_modalities(session_dir: Path, side_prefix: str, cutoff_ms: int, 
 
         if dry_run:
             removed = len(rows) - len(new_rows)
-            print(f"[DRY] Would keep {len(new_rows)} / {len(rows)} rows in {descriptor_path} (remove {removed})")
+            if removed > 0:
+                print(f"[DRY] Would modify {descriptor_path} (keep {len(new_rows)} / {len(rows)} rows, remove {removed})")
         else:
             with descriptor_path.open("w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -205,15 +221,20 @@ def _trim_depth_modalities(session_dir: Path, side_prefix: str, cutoff_ms: int, 
 
     # 2) Depth maps (.raw) – delete files whose timestamp is > cutoff or no longer in descriptors
     depth_dir = session_dir / f"{side_prefix}_depth"
+    files_to_delete = []
     if depth_dir.exists():
         for file_path in depth_dir.glob("*.raw"):
             ts = _parse_timestamp_stem(file_path.stem)
             if ts is None:
                 continue
             if ts > cutoff_ms or (kept_timestamps and ts not in kept_timestamps):
-                if dry_run:
-                    print(f"[DRY] Would delete {file_path}")
-                else:
+                files_to_delete.append(file_path)
+        
+        if files_to_delete:
+            if dry_run:
+                print(f"[DRY] Would delete {len(files_to_delete)} file(s) from {depth_dir}")
+            else:
+                for file_path in files_to_delete:
                     try:
                         file_path.unlink()
                         print(f"[Trim] Deleted {file_path}")
@@ -248,18 +269,19 @@ def _trim_hmd_poses(session_dir: Path, cutoff_ms: int, dry_run: bool) -> None:
         if ts <= cutoff_ms:
             new_rows.append(row)
 
-    if dry_run:
-        removed = len(rows) - len(new_rows)
-        print(f"[DRY] Would keep {len(new_rows)} / {len(rows)} HMD poses in {pose_path} (remove {removed})")
-    else:
-        with pose_path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(new_rows)
-        print(
-            f"[Trim] Rewrote {pose_path} with "
-            f"{len(new_rows)} / {len(rows)} rows (cutoff_ms={cutoff_ms})"
-        )
+    removed = len(rows) - len(new_rows)
+    if removed > 0:
+        if dry_run:
+            print(f"[DRY] Would modify {pose_path} (keep {len(new_rows)} / {len(rows)} rows, remove {removed})")
+        else:
+            with pose_path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(new_rows)
+            print(
+                f"[Trim] Rewrote {pose_path} with "
+                f"{len(new_rows)} / {len(rows)} rows (cutoff_ms={cutoff_ms})"
+            )
 
 
 def _trim_color_aligned_depth(session_dir: Path, cutoff_ms: int, dry_run: bool) -> None:

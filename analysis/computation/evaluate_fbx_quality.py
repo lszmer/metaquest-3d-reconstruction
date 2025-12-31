@@ -8,12 +8,20 @@ This script implements the refined quality score described in the thesis:
 
 with batch-wise min–max normalization of all underlying metrics.
 
+ARGUMENTS:
+    meshes              Unpaired mesh paths (FBX/PLY). Ignored in pair mode if --pair or --from-csv is provided.
+    --pair FOG NOFOG    Fog and no-fog mesh paths for a pair (can be used multiple times).
+    --from-csv PATH     Load fog/no-fog pairs automatically from CSV file. Only pairs where both meshes exist will be included.
+    --csv PATH          Optional path to write detailed CSV with all metrics and scores.
+    --out-dir PATH      Output directory for batch artifacts (plots, pairwise summary). Default: analysis/mesh_quality_batch
+    --num-workers INT   Number of parallel workers for mesh processing. Defaults to CPU count. Use 1 for sequential processing.
+
 Three usage modes are supported:
 
 1) Single / unpaired meshes
    - Evaluate one or more meshes independently.
    - Example:
-        python evaluate_fbx_quality.py mesh1.fbx mesh2.fbx
+        python analysis/computation/evaluate_fbx_quality.py mesh1.fbx mesh2.fbx --num-workers 4
 
 2) Paired fog / no-fog evaluation (manual pairs)
    - Explicitly pass fog / no-fog meshes as pairs. The script will:
@@ -21,15 +29,16 @@ Three usage modes are supported:
        * compute relative rankings across the whole batch
        * print per-pair improvements similar to the thesis examples
    - Example:
-        python evaluate_fbx_quality.py \\
+        python analysis/computation/evaluate_fbx_quality.py \\
             --pair fog1.fbx nofog1.fbx \\
-            --pair fog2.fbx nofog2.fbx
+            --pair fog2.fbx nofog2.fbx \\
+            --num-workers 4
 
 3) Automatic pair loading from CSV (recommended for batch analysis)
    - Load pairs automatically from master_fog_no_fog_report.csv
    - Only pairs where both meshes exist (color_mesh_present=True) are included
    - Example:
-        python analysis/computation/evaluate_fbx_quality.py --from-csv analysis/data/master_fog_no_fog_report.csv
+        python analysis/computation/evaluate_fbx_quality.py --from-csv analysis/data/master_fog_no_fog_report.csv --num-workers 4
 """
 
 from __future__ import annotations
@@ -52,14 +61,17 @@ import io
 import base64
 
 try:
-    from .mesh_loader import load_mesh
+    from analysis.computation.mesh_loader import load_mesh
 except ImportError:
-    # Script execution fallback
-    import sys
-
-    script_dir = Path(__file__).resolve().parent
-    sys.path.insert(0, str(script_dir.parent))
-    from .mesh_loader import load_mesh  # type: ignore
+    # Script execution fallback - try relative import
+    try:
+        from .mesh_loader import load_mesh
+    except ImportError:
+        # Last resort - try importing from same directory
+        import sys
+        script_dir = Path(__file__).resolve().parent
+        sys.path.insert(0, str(script_dir))
+        from mesh_loader import load_mesh
 
 
 # -----------------------------------------------------------------------------
@@ -69,8 +81,8 @@ except ImportError:
 
 def compute_angle(v1: np.ndarray, v2: np.ndarray) -> float:
     """Angle between two vectors in radians."""
-    v1n = v1 / (np.linalg.norm(v1) + 1e-12)
-    v2n = v2 / (np.linalg.norm(v2) + 1e-12)
+    v1n = np.divide(v1, (np.linalg.norm(v1) + 1e-12))
+    v2n = np.divide(v2, (np.linalg.norm(v2) + 1e-12))
     cos = float(np.clip(np.dot(v1n, v2n), -1.0, 1.0))
     return float(np.arccos(cos))
 
@@ -831,7 +843,7 @@ def write_pairwise_reports(
         labels.append(meta.get("participant") or meta.get("pair_id") or f"pair{i+1}")
         fog_vals.append(fog_s.Q_norm)
         nofog_vals.append(nofog_s.Q_norm)
-        deltas.append(delta)
+        deltas.append(delta_nofog_minus_fog)
 
     with summary_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)

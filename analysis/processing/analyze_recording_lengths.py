@@ -10,6 +10,7 @@ Key features:
 - Examines multiple data sources: YUV frames, RGB frames, depth descriptors, HMD pose logs
 - Calculates start/end timestamps from filename patterns and metadata
 - Handles macOS sidecar files and timestamp parsing edge cases
+- Applies timestamp offsets to align different recording modalities
 - Provides detailed console output for single session analysis
 - Generates comprehensive CSV reports for batch analysis
 - Validates data integrity by cross-checking multiple timestamp sources
@@ -19,8 +20,18 @@ Console Usage Examples:
     python analysis/processing/analyze_recording_lengths.py \
         --session-dir /Volumes/Intenso/Fog/20251209_144306
 
+    # Apply timestamp offset to align YUV/RGB with depth/HMD recordings
+    python analysis/processing/analyze_recording_lengths.py \
+        --session-dir /Volumes/Intenso/Fog/20251209_144306 \
+        --yuv-rgb-offset-ms 180100
+
     # Batch analyze recording lengths using default master report
     python analysis/processing/analyze_recording_lengths.py
+
+    # Batch process with timestamp offset applied to all sessions
+    python analysis/processing/analyze_recording_lengths.py \
+        --yuv-rgb-offset-ms 180100 \
+        --output analysis/data/aligned_recording_lengths.csv
 
     # Specify custom master report and output file for batch processing
     python analysis/processing/analyze_recording_lengths.py \
@@ -58,22 +69,31 @@ class TimeStats:
         return (self.end_ms - self.start_ms) / 1000.0
 
 
-def _parse_timestamp_stem(stem: str) -> Optional[int]:
+def _parse_timestamp_stem(stem: str, offset_ms: int = 0) -> Optional[int]:
     """
     Parse integer timestamp from a filename stem, handling macOS sidecar
     prefixes that sometimes appear on external drives.
+
+    Args:
+        stem: Filename stem to parse
+        offset_ms: Offset in milliseconds to subtract from parsed timestamp
+
+    Returns:
+        Parsed timestamp with offset applied, or None if parsing fails
     """
     if stem.startswith("._"):
         stem = stem[2:]
     elif stem.startswith("_"):
         stem = stem.lstrip("_")
-    return int(stem) if stem.isdigit() else None
+
+    timestamp = int(stem) if stem.isdigit() else None
+    return timestamp - offset_ms if timestamp is not None else None
 
 
-def _gather_file_timestamps(dir_path: Path, suffix: str) -> TimeStats:
+def _gather_file_timestamps(dir_path: Path, suffix: str, offset_ms: int = 0) -> TimeStats:
     timestamps: list[int] = []
     for file_path in sorted(dir_path.glob(f"*{suffix}")):
-        ts = _parse_timestamp_stem(file_path.stem)
+        ts = _parse_timestamp_stem(file_path.stem, offset_ms)
         if ts is None:
             continue
         timestamps.append(ts)
@@ -131,6 +151,10 @@ def _gather_hmd_pose_timestamps(session_dir: Path) -> TimeStats:
 
 
 def _combine_modalities(modalities: Iterable[TimeStats]) -> TimeStats:
+    """
+    Calculate the overlapping time window where all modalities are active.
+    Returns the intersection (overlap) of all recording periods, not the full span.
+    """
     starts = [m.start_ms for m in modalities if m.start_ms is not None]
     ends = [m.end_ms for m in modalities if m.end_ms is not None]
     counts = [m.count for m in modalities if m.count > 0]
@@ -138,14 +162,23 @@ def _combine_modalities(modalities: Iterable[TimeStats]) -> TimeStats:
     if not starts or not ends:
         return TimeStats(None, None, sum(counts))
 
-    return TimeStats(min(starts), max(ends), sum(counts))
+    # Overlapping window: from latest start to earliest end
+    # This represents the time when all modalities are recording simultaneously
+    overlap_start = max(starts)
+    overlap_end = min(ends)
+    
+    # If there's no overlap (earliest end < latest start), return None
+    if overlap_end < overlap_start:
+        return TimeStats(None, None, sum(counts))
+    
+    return TimeStats(overlap_start, overlap_end, sum(counts))
 
 
-def analyze_session(session_dir: Path) -> dict[str, str]:
-    yuv_left = _gather_file_timestamps(session_dir / "left_camera_raw", ".yuv")
-    yuv_right = _gather_file_timestamps(session_dir / "right_camera_raw", ".yuv")
-    rgb_left = _gather_file_timestamps(session_dir / "left_camera_rgb", ".png")
-    rgb_right = _gather_file_timestamps(session_dir / "right_camera_rgb", ".png")
+def analyze_session(session_dir: Path, yuv_rgb_offset_ms: int = 0) -> dict[str, str]:
+    yuv_left = _gather_file_timestamps(session_dir / "left_camera_raw", ".yuv", yuv_rgb_offset_ms)
+    yuv_right = _gather_file_timestamps(session_dir / "right_camera_raw", ".yuv", yuv_rgb_offset_ms)
+    rgb_left = _gather_file_timestamps(session_dir / "left_camera_rgb", ".png", yuv_rgb_offset_ms)
+    rgb_right = _gather_file_timestamps(session_dir / "right_camera_rgb", ".png", yuv_rgb_offset_ms)
 
     depth_left = _gather_depth_timestamps(session_dir, "left")
     depth_right = _gather_depth_timestamps(session_dir, "right")
@@ -186,21 +219,28 @@ def analyze_session(session_dir: Path) -> dict[str, str]:
     return row
 
 
-def print_session_analysis(session_dir: Path, row: dict[str, str]) -> None:
+def print_session_analysis(session_dir: Path, row: dict[str, str], offset_applied: int = 0) -> None:
     """Print detailed session analysis results to console in a legible format."""
     print("=" * 80)
     print(f"RECORDING LENGTH ANALYSIS: {session_dir.name}")
     print("=" * 80)
     print(f"Session Directory: {session_dir}")
     print(f"Directory Exists: {row.get('session_dir_exists', 'Unknown')}")
+    if offset_applied > 0:
+        print(f"YUV/RGB Timestamp Offset Applied: -{offset_applied}ms")
     print()
 
-    # Overall duration
+    # Overall duration (overlapping window)
     overall_duration = row.get('overall_duration_s', '')
     if overall_duration:
         duration_sec = float(overall_duration)
-        print("OVERALL RECORDING DURATION:")
+        print("OVERALL RECORDING DURATION (Overlapping Window):")
         print(f"  Total Duration: {duration_sec:.3f} seconds ({duration_sec/60:.2f} minutes)")
+        print("  (Time window where all modalities are recording simultaneously)")
+        print()
+    else:
+        print("OVERALL RECORDING DURATION:")
+        print("  ⚠ No overlapping time window found - modalities do not overlap")
         print()
 
     # Individual modalities
@@ -231,11 +271,50 @@ def print_session_analysis(session_dir: Path, row: dict[str, str]) -> None:
             print(f"    Time Range: {start}ms - {end}ms")
         print()
 
+    # Alignment Analysis
+    print("TIMESTAMP ALIGNMENT ANALYSIS:")
+    yuv_start = row.get('yuv_left_start_ms', '')
+    depth_start = row.get('depth_left_start_ms', '')
+    hmd_start = row.get('hmd_start_ms', '')
+    
+    if yuv_start and depth_start:
+        yuv_start_int = int(yuv_start)
+        depth_start_int = int(depth_start)
+        yuv_depth_diff = depth_start_int - yuv_start_int
+        print(f"  YUV vs Depth Start Difference: {yuv_depth_diff}ms ({yuv_depth_diff/1000:.3f}s)")
+        if yuv_depth_diff > 0:
+            print(f"    → Depth starts {yuv_depth_diff}ms AFTER YUV (YUV needs -{yuv_depth_diff}ms offset)")
+        else:
+            print(f"    → Depth starts {abs(yuv_depth_diff)}ms BEFORE YUV (YUV needs +{abs(yuv_depth_diff)}ms offset)")
+    
+    if yuv_start and hmd_start:
+        yuv_start_int = int(yuv_start)
+        hmd_start_int = int(hmd_start)
+        yuv_hmd_diff = hmd_start_int - yuv_start_int
+        print(f"  YUV vs HMD Start Difference: {yuv_hmd_diff}ms ({yuv_hmd_diff/1000:.3f}s)")
+        if yuv_hmd_diff > 0:
+            print(f"    → HMD starts {yuv_hmd_diff}ms AFTER YUV (YUV needs -{yuv_hmd_diff}ms offset)")
+        else:
+            print(f"    → HMD starts {abs(yuv_hmd_diff)}ms BEFORE YUV (YUV needs +{abs(yuv_hmd_diff)}ms offset)")
+    
+    if depth_start and hmd_start:
+        depth_start_int = int(depth_start)
+        hmd_start_int = int(hmd_start)
+        depth_hmd_diff = hmd_start_int - depth_start_int
+        print(f"  Depth vs HMD Start Difference: {depth_hmd_diff}ms ({abs(depth_hmd_diff)/1000:.3f}s)")
+        if abs(depth_hmd_diff) < 1000:
+            print(f"    → Depth and HMD are well aligned (difference < 1s)")
+        else:
+            print(f"    → Depth and HMD have significant misalignment")
+    print()
+
     # Summary
     if overall_duration:
         duration_sec = float(overall_duration)
         status = "✓ Within expected range (≤20s)" if duration_sec <= 20.0 else f"⚠ Longer than expected ({duration_sec:.1f}s > 20s)"
         print(f"STATUS: {status}")
+    else:
+        print("STATUS: ⚠ No overlap - timestamps need alignment")
 
     print("=" * 80)
 
@@ -292,6 +371,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Single session directory to analyze (shows detailed console output)",
     )
+    parser.add_argument(
+        "--yuv-rgb-offset-ms",
+        type=int,
+        default=0,
+        help="Offset in milliseconds to subtract from YUV/RGB timestamps (default: 0)",
+    )
 
     # Batch mode
     parser.add_argument(
@@ -319,8 +404,10 @@ def main() -> None:
             return
 
         print(f"[Info] Analyzing single session: {args.session_dir}")
-        row = analyze_session(args.session_dir)
-        print_session_analysis(args.session_dir, row)
+        if args.yuv_rgb_offset_ms != 0:
+            print(f"[Info] Applying YUV/RGB timestamp offset: -{args.yuv_rgb_offset_ms}ms")
+        row = analyze_session(args.session_dir, args.yuv_rgb_offset_ms)
+        print_session_analysis(args.session_dir, row, args.yuv_rgb_offset_ms)
         return
 
     # Batch mode (existing functionality)
@@ -329,7 +416,7 @@ def main() -> None:
         print(f"[Warning] No session_dir entries found in {args.master_report}")
         return
 
-    rows = [analyze_session(session_dir) for session_dir in session_dirs]
+    rows = [analyze_session(session_dir, args.yuv_rgb_offset_ms) for session_dir in session_dirs]
     write_report(rows, args.output)
 
     over_20s = [r for r in rows if r.get("overall_duration_s") and float(r["overall_duration_s"]) > 20.0]

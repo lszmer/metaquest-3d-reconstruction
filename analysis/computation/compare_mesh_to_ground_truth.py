@@ -63,10 +63,14 @@ import open3d as o3d
 try:
     from .mesh_loader import load_mesh, mesh_to_point_cloud
 except ImportError:
-    # If running as a script, add parent directory to path
-    script_dir = Path(__file__).resolve().parent
-    sys.path.insert(0, str(script_dir.parent))
-    from .mesh_loader import load_mesh, mesh_to_point_cloud
+    # Script execution fallback - use absolute import
+    try:
+        from mesh_loader import load_mesh, mesh_to_point_cloud
+    except ImportError:
+        # Last resort - try importing from parent directory
+        script_dir = Path(__file__).resolve().parent
+        sys.path.insert(0, str(script_dir.parent))
+        from computation.mesh_loader import load_mesh, mesh_to_point_cloud
 
 
 @dataclass

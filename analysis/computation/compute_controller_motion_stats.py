@@ -432,9 +432,17 @@ def compute_inter_hand_stats(
         min_len = min(len(left_speeds), len(right_speeds))
         left_speeds_aligned = left_speeds[:min_len]
         right_speeds_aligned = right_speeds[:min_len]
-        
-        correlation_matrix = np.corrcoef(left_speeds_aligned, right_speeds_aligned)
-        movement_correlation = float(correlation_matrix[0, 1]) if not np.isnan(correlation_matrix[0, 1]) else 0.0
+
+        # Check for zero variance to avoid division by zero in correlation
+        left_std = np.std(left_speeds_aligned)
+        right_std = np.std(right_speeds_aligned)
+
+        if left_std > 0 and right_std > 0:
+            correlation_matrix = np.corrcoef(left_speeds_aligned, right_speeds_aligned)
+            movement_correlation = float(correlation_matrix[0, 1]) if not np.isnan(correlation_matrix[0, 1]) else 0.0
+        else:
+            # Cannot compute correlation with zero variance
+            movement_correlation = 0.0
     else:
         movement_correlation = 0.0
     
