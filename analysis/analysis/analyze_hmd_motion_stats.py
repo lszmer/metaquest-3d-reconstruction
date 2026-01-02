@@ -20,13 +20,7 @@ Console Usage Examples:
     # Specify custom input/output paths
     python analysis/analysis/analyze_hmd_motion_stats.py \
         --input_csv analysis/data/hmd_all_summary.csv \
-        --output_dir analysis/reports/hmd_motion_analysis \
-        --exclude-participant "Samuel Thompson"
-
-    python analysis/analysis/analyze_hmd_motion_stats.py \
-        --input_csv analysis/data/hmd_all_summary.csv \
-        --output_dir analysis/reports/hmd_motion_analysis_excl_Sam \
-        --exclude-participant "Samuel Thompson"
+        --output_dir analysis/reports/hmd_motion_analysis_final
 
     # Exclude specific participants from analysis
     python analysis/analysis/analyze_hmd_motion_stats.py \

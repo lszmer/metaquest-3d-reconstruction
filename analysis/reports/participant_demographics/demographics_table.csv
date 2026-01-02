@@ -1,0 +1,25 @@
+Characteristic,Mean (SD),Median [Range],N
+Age (years),24.9 (1.4),25.0 [23--28],14
+Gender,,,
+  Female,7 (50.0%),,
+  Male,7 (50.0%),,
+VR Experience (years),0.70 (1.84),0.05 [0.00--7.00],14
+Gaming Experience (years),6.7 (7.7),3.0 [0--20],14
+Laterality,,,
+  Left-handed,2 (14.3%),,
+  Right-handed,12 (85.7%),,
+Glasses wearer,,,
+  No,7 (50.0%),,
+  Yes,7 (50.0%),,
+Highest Education,,,
+  Bachelor,11 (78.6%),,
+  Master,3 (21.4%),,
+Current Education,,,
+  Master,9 (64.3%),,
+  PhD,5 (35.7%),,
+Nationality,,,
+  Canadian,1 (7.1%),,
+  German,10 (71.4%),,
+  Greek,1 (7.1%),,
+  New Zealander,1 (7.1%),,
+  Spanish,1 (7.1%),,

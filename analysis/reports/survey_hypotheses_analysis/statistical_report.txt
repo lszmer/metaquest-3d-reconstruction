@@ -1,0 +1,180 @@
+================================================================================
+STATISTICAL ANALYSIS REPORT: SURVEY HYPOTHESES (H4-H7)
+================================================================================
+
+METHODOLOGY
+--------------------------------------------------------------------------------
+All statistical tests use Wilcoxon Signed-Rank Tests (non-parametric paired t-tests)
+due to small sample size (N=14).
+
+One-tailed tests are used when directional hypotheses are specified.
+
+
+================================================================================
+TEST 1: H4 - ENGAGEMENT (FLOW)
+================================================================================
+Hypothesis: Assisted > Unassisted
+Variables: FSS_FlowTotal_sphere vs. FSS_FlowTotal_nosphere
+Test: Paired Wilcoxon Signed-Rank (Alternative: Greater)
+
+Sample Size: N = 14
+
+Descriptive Statistics:
+  Assisted (Sphere):
+    Mean = 48.36
+    SD = 5.93
+    Median = 48.50
+  Unassisted (Nosphere):
+    Mean = 45.57
+    SD = 4.93
+    Median = 46.50
+
+Test Results:
+  Statistic = 68.0000
+  p-value = 0.0575
+  Significant (p < 0.05): No
+
+================================================================================
+TEST 2: H5 - PERCEIVED PERFORMANCE
+================================================================================
+Hypothesis: Assisted < Unassisted (Lower score is better)
+Variables: TLX_4_sphere vs. TLX_4_nosphere
+Test: Paired Wilcoxon Signed-Rank (Alternative: Less)
+Note: Anchor 0 = 'Excellent', 100 = 'Failure'. Lower values = better performance.
+
+Sample Size: N = 14
+
+Descriptive Statistics:
+  Assisted (Sphere):
+    Mean = 44.64
+    SD = 25.53
+    Median = 50.00
+  Unassisted (Nosphere):
+    Mean = 52.14
+    SD = 21.00
+    Median = 52.50
+
+Test Results:
+  Statistic = 31.0000
+  p-value = 0.0876
+  Significant (p < 0.05): No
+
+================================================================================
+TEST 3: H6 - REALISM TRADE-OFF
+================================================================================
+Hypothesis: Assisted < Unassisted (Overlay reduces realism)
+Variables: IPQ Realism Subscale (Items 11-14)
+  - Item 11 was reverse coded (8 - IPQ_11)
+  - Subscale = Mean of IPQ_11_REV, IPQ_12, IPQ_13, IPQ_14
+Test: Paired Wilcoxon Signed-Rank (Alternative: Less)
+
+Sample Size: N = 14
+
+Descriptive Statistics:
+  Assisted (Sphere):
+    Mean = 4.36
+    SD = 0.98
+    Median = 4.25
+  Unassisted (Nosphere):
+    Mean = 4.73
+    SD = 0.65
+    Median = 4.62
+
+Test Results:
+  Statistic = 15.5000
+  p-value = 0.0592
+  Significant (p < 0.05): No
+
+================================================================================
+TEST 4: H7 - WORKLOAD REDISTRIBUTION
+================================================================================
+
+H7a: Physical Demand (TLX_2)
+Expectation: Assisted > Unassisted (Assisted is more physically demanding)
+Variables: TLX_2_sphere vs. TLX_2_nosphere
+Test: Paired Wilcoxon Signed-Rank (Alternative: Greater)
+
+Sample Size: N = 14
+
+Descriptive Statistics:
+  Assisted (Sphere):
+    Mean = 22.86
+    SD = 16.37
+    Median = 27.50
+  Unassisted (Nosphere):
+    Mean = 23.57
+    SD = 22.65
+    Median = 20.00
+
+Test Results:
+  Statistic = 16.5000
+  p-value = 0.5837
+  Significant (p < 0.05): No
+
+H7b: Frustration (TLX_6)
+Expectation: Assisted < Unassisted (Assisted is less frustrating)
+Variables: TLX_6_sphere vs. TLX_6_nosphere
+Test: Paired Wilcoxon Signed-Rank (Alternative: Less)
+
+Sample Size: N = 14
+
+Descriptive Statistics:
+  Assisted (Sphere):
+    Mean = 12.50
+    SD = 18.05
+    Median = 10.00
+  Unassisted (Nosphere):
+    Mean = 14.64
+    SD = 17.92
+    Median = 10.00
+
+Test Results:
+  Statistic = 17.5000
+  p-value = 0.4719
+  Significant (p < 0.05): No
+
+Additional Analysis: Mental Demand (TLX_1)
+Variables: TLX_1_sphere vs. TLX_1_nosphere
+Test: Paired Wilcoxon Signed-Rank (Two-sided)
+
+Sample Size: N = 14
+
+Descriptive Statistics:
+  Assisted (Sphere):
+    Mean = 23.93
+    SD = 24.90
+    Median = 10.00
+  Unassisted (Nosphere):
+    Mean = 23.21
+    SD = 27.57
+    Median = 10.00
+
+Test Results:
+  Statistic = 14.0000
+  p-value = 0.3092
+  Significant (p < 0.05): No
+
+================================================================================
+DESCRIPTIVE STATISTICS: SYSTEM USABILITY SCALE (SUS)
+================================================================================
+Metric: SUS_Score_sphere (Assisted condition only)
+
+Sample Size: N = 14
+Mean = 88.21
+SD = 8.68
+Median = 90.00
+Range: 67.50 - 97.50
+
+Benchmark Interpretation:
+  Mean = 88.21
+  Classification: Excellent
+  (>68: Above Average, >80: Excellent)
+
+================================================================================
+SUMMARY
+================================================================================
+
+Total tests performed: 6
+Significant results (p < 0.05): 0
+
+No significant results found (p < 0.05).

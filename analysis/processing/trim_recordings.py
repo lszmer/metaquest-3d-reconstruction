@@ -15,7 +15,7 @@ Console Usage Examples:
     # Trim to specific duration with custom report
     python analysis/processing/trim_recordings.py \
         --length-report analysis/data/recording_length_report.csv \
-        --max-duration-s 20.0
+        --max-duration-s 17.1
 
     # Trim by YUV frame count instead of duration
     python analysis/processing/trim_recordings.py \
